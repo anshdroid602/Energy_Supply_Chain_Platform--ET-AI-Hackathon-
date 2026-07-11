@@ -42,6 +42,13 @@ CORRIDOR_MAP = {
 # used here as the deterministic stand-in for "diplomatic interaction codes".
 DIPLOMATIC_CAMEO_ROOTS = {"01", "02", "03", "04", "05"}
 
+# CAMEO fallbacks for when no GKG themes are available (the public/no-key
+# fetch path has no GKG stage): 18 assault / 19 fight / 20 unconventional
+# mass violence -> military_strike; 163x impose embargo-boycott-sanctions
+# and 172x impose administrative sanctions -> sanction.
+MILITARY_CAMEO_ROOTS = {"18", "19", "20"}
+SANCTION_CAMEO_PREFIXES = ("163", "172")
+
 DIPLOMATIC_THEME_KEYWORDS = ("DIPLOMATIC", "NEGOTIATION", "TREATY", "SUMMIT", "MEETING")
 
 CATEGORY_LABELS = {
@@ -106,6 +113,14 @@ def extract_event_category(event, all_themes):
         return "maritime_incident"
 
     if any(("MILITARY" in t or "ARMEDCONFLICT" in t) for t in all_themes):
+        return "military_strike"
+
+    # No theme match (or no GKG context at all): fall back to the CAMEO
+    # event code, which every GDELT event carries.
+    code_str = str(event.get("event_code") or "").strip()
+    if code_str.startswith(SANCTION_CAMEO_PREFIXES):
+        return "sanction"
+    if cameo_root(event.get("event_code")) in MILITARY_CAMEO_ROOTS:
         return "military_strike"
 
     is_diplomatic_code = cameo_root(event.get("event_code")) in DIPLOMATIC_CAMEO_ROOTS

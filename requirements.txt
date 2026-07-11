@@ -1,0 +1,17 @@
+# Core: loaders + controller + API
+psycopg2-binary
+requests
+python-dotenv
+pandas
+yfinance
+websockets
+fastapi
+uvicorn[standard]
+
+# LLM extraction stages (extract_events.py / hybrid_extract.py) — free-tier OpenRouter
+openai
+
+# Only for the BigQuery GDELT path (gdelt.py / gkg.py); the default public
+# path doesn't need it. Uncomment if you have GCP credentials:
+# google-cloud-bigquery
+# db-dtypes

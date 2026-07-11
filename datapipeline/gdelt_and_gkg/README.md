@@ -1,22 +1,21 @@
-# Energy Supply Chain Platform — ET AI Hackathon
+# GDELT + GKG pipeline
 
-AI-driven crude oil supply chain risk intelligence: GDELT events → structured
-risk signals → Postgres → an API the dashboard and AI agents both read from.
+GDELT events → structured risk signals → the `structured_events` table.
+(The read API moved to the repo root: `api/main.py` — one FastAPI over ALL
+tables, run with `uvicorn api.main:app` from the repo root.)
 
 ## Quick start
 
 ```bash
-python3 run_pipeline.py
-uvicorn api:app --reload --port 8000
+python3 run_pipeline.py                    # public GDELT dumps, no keys needed
+python3 run_pipeline.py --source bigquery  # richer data, needs GCP credentials
 ```
-
-Then open `http://localhost:8000/docs` for the interactive API.
 
 ## Architecture
 
 ```
-gdelt.py  →  gkg.py  →  merge.py  →  extract.py  →  load_to_postgres.py  →  api.py
-(raw events) (raw GKG)  (event_bundles.json) (structured_events.json)  (Postgres)   (FastAPI, read layer)
+fetch_public.py  (or gdelt.py + gkg.py)  →  merge.py  →  extract.py  →  load_to_postgres.py
+(raw events [+ GKG])           (event_bundles.json)  (structured_events.json)   (Postgres)
 ```
 
 Each stage is a standalone script, independently runnable for debugging.
@@ -24,12 +23,24 @@ Each stage is a standalone script, independently runnable for debugging.
 
 | Stage | Script | Reads | Writes |
 |---|---|---|---|
-| 1 | `gdelt.py` | GDELT Events API | `gdelt_events_with_mentions.csv` |
-| 2 | `gkg.py` | GDELT GKG API | `gdelt_gkg_events.csv` |
-| 3 | `merge.py` | both CSVs above | `event_bundles.json` |
-| 4 | `extract.py` (deterministic)<br>`extract_events.py` (LLM)<br>`hybrid_extract.py` (both) | `event_bundles.json` | `structured_events.json` |
-| 5 | `load_to_postgres.py` | `structured_events.json` | `structured_events` table |
-| 6 | `api.py` | Postgres | HTTP JSON |
+| 1 | `fetch_public.py` (default, no key)<br>OR `gdelt.py` + `gkg.py` (BigQuery, GCP creds) | GDELT public daily dumps / BigQuery partitioned tables | `gdelt_events_with_mentions.csv` (+ `gdelt_gkg_events.csv` on the BigQuery path) |
+| 2 | `merge.py` | the CSV(s) above — GKG file optional | `event_bundles.json` |
+| 3 | `extract.py` (deterministic)<br>`extract_events.py` (LLM)<br>`hybrid_extract.py` (both) | `event_bundles.json` | `structured_events.json` |
+| 4 | `load_to_postgres.py` | `structured_events.json` | `structured_events` table |
+
+All fetch windows are **rolling** (today back `GDELT_WINDOW_DAYS` days,
+default 30) — no more hardcoded dates. Filters are env-tunable:
+`GDELT_ACTORS`, `GDELT_MAX_GOLDSTEIN`, `GCP_PROJECT`.
+
+The BigQuery scripts now query the **partitioned** mirror tables
+(`events_partitioned` / `eventmentions_partitioned` / `gkg_partitioned`)
+with a `_PARTITIONTIME` filter — the raw tables are unpartitioned, so the old
+queries scanned the full multi-hundred-GB history every run and would have
+burned the 1TB/month free tier in a handful of runs.
+
+On the public path there is no GKG context, so `extract.py` falls back to
+CAMEO event codes for categorisation (18/19/20 → military_strike,
+163x/172x → sanction) and confidence scores run lower. That's expected.
 
 ## Setup
 
@@ -59,11 +70,12 @@ python3 run_pipeline.py
 
 Common variations:
 ```bash
+python3 run_pipeline.py --source bigquery          # GCP-credentialed fetch (mentions + GKG)
 python3 run_pipeline.py --extractor hybrid        # hybrid_extract.py instead of extract.py
 python3 run_pipeline.py --extractor llm           # extract_events.py instead
 python3 run_pipeline.py --from merge               # CSVs already fetched, skip to merge.py
 python3 run_pipeline.py --only extract             # rerun just the extraction stage
-python3 run_pipeline.py --skip gdelt --skip gkg    # skip any combination
+python3 run_pipeline.py --skip fetch               # skip any combination
 ```
 
 If a stage fails, `run_pipeline.py` stops immediately and prints which
@@ -101,40 +113,23 @@ models are currently free (rather than hardcoding model names that rotate),
 retry on 429/502/503, and checkpoint after every batch — safe to Ctrl+C and
 resume later.
 
-## API (`api.py`)
+## API
 
-FastAPI read layer over the `structured_events` table, for both the
-dashboard frontend and AI agents to consume.
+Moved to the repo root as `api/main.py` — one FastAPI in front of Postgres
+covering ALL tables (events + risk scores + prices + vessels + imports +
+sanctions + freshness). Run from the repo root:
 
 ```bash
-uvicorn api:app --reload --port 8000
+uvicorn api.main:app --reload --port 8000
 ```
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | liveness check |
-| `GET /meta` | valid `corridor`/`category` values |
-| `GET /events` | filterable, paginated event list |
-| `GET /events/{event_id}` | single event |
-| `GET /corridors` | per-corridor aggregate stats |
-| `GET /corridors/{corridor}/risk-score` | deterministic 0–1 risk score (Low/Medium/High/Critical) |
-
-`/events` filters: `corridor`, `category`, `country`, `actor`, `min_severity`,
-`max_severity`, `min_confidence`, `start_date`, `end_date`, `sort`, `limit`,
-`offset`.
-
-**Risk score formula** — confidence- and recency-weighted mean severity,
-tunable via `window_days` and `half_life_days` query params:
+Endpoint list and details: root `README.md`. The risk-score formula is
+unchanged — confidence- and recency-weighted mean severity, tunable via
+`window_days` and `half_life_days` query params:
 ```
 risk_score = Σ(severity_i/10 × confidence_i × decay_i) / Σ(confidence_i × decay_i)
 decay_i = 0.5 ^ (days_ago_i / half_life_days)
 ```
-
-CORS is currently open (`allow_origins=["*"]`) for hackathon convenience —
-tighten this to the real frontend origin before it's anything but a demo.
-
-Full interactive docs (and machine-readable schema for agents) at
-`http://localhost:8000/docs` and `http://localhost:8000/openapi.json`.
 
 ## Important gotcha: FIPS vs ISO2 country codes
 

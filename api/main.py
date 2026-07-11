@@ -1,15 +1,18 @@
 """
-Read API over structured_events (Postgres) for the dashboard frontend and
-AI agents to consume.
+The one read API in front of Postgres, for the dashboard frontend and AI
+agents to consume. Covers every table the datapipeline loads: GDELT risk
+events + corridor risk scores, Brent/WTI prices (daily + intraday), live
+vessel positions (with sanctioned-tanker matching), OFAC sanctions, India
+import bills, and pipeline freshness.
 
-Run:
-  uvicorn api:app --reload --port 8000
+Run (from the repo root):
+  uvicorn api.main:app --reload --port 8000
 
 Docs (Swagger UI, auto-generated, agents can also read /openapi.json):
   http://localhost:8000/docs
 
 Requires: pip install fastapi "uvicorn[standard]" psycopg2-binary python-dotenv
-DATABASE_URL must be set in .env (same one load_to_postgres.py uses).
+DATABASE_URL must be set in .env (same one the loaders use).
 """
 
 import math
@@ -367,3 +370,236 @@ def corridor_risk_score(
         event_count_in_window=len(rows),
         top_events=top_events,
     )
+
+
+# ============================================================================
+# Market data, vessels, imports, sanctions, freshness — the rest of the
+# datapipeline tables, so this stays the single API in front of Postgres.
+# ============================================================================
+
+class DailyPrice(BaseModel):
+    day: date
+    ticker: str          # 'BRENT' | 'WTI'
+    usd: float
+    source: str
+
+
+class PriceTick(BaseModel):
+    ts: datetime
+    ticker: str          # 'BZ=F' | 'CL=F'
+    usd: float
+
+
+class VesselPosition(BaseModel):
+    mmsi: int
+    lat: Optional[float]
+    lon: Optional[float]
+    sog: Optional[float]
+    cog: Optional[float]
+    ts: datetime
+    name: Optional[str]
+    sanctioned: bool
+    # 'mmsi' = OFAC remarks contain this exact MMSI (strong evidence);
+    # 'name' = ship name equals an SDN vessel name (weak — names repeat);
+    # None = no match.
+    sanction_match: Optional[str]
+
+
+class IndiaImportRow(BaseModel):
+    period: Optional[date]
+    product: str
+    trade: str
+    quantity_tmt: Optional[float]
+    value_inr_cr: Optional[float]
+    value_usd_mn: Optional[float]
+
+
+class SanctionedVessel(BaseModel):
+    ent_num: int
+    name: Optional[str]
+    program: Optional[str]
+    vessel_flag: Optional[str]
+    remarks: Optional[str]
+
+
+class FeedFreshness(BaseModel):
+    feed: str
+    last_run: Optional[datetime]
+    last_status: Optional[str]
+    last_rows: Optional[int]
+    note: Optional[str]
+
+
+@app.get("/prices/daily", response_model=list[DailyPrice])
+def daily_prices(
+    conn=Depends(get_db),
+    ticker: Optional[Literal["BRENT", "WTI"]] = Query(None),
+    days: int = Query(365, ge=1, le=5000, description="How far back from the latest day on record"),
+):
+    """Official EIA daily spot prices — the citable series the scenario model
+    calibrates on."""
+    where = ["day >= (SELECT max(day) FROM prices) - %s * INTERVAL '1 day'"]
+    params: list = [days]
+    if ticker:
+        where.append("ticker = %s")
+        params.append(ticker)
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT day, ticker, usd, source FROM prices WHERE {' AND '.join(where)} ORDER BY day;",
+            params,
+        )
+        return [DailyPrice(**r) for r in cur.fetchall()]
+
+
+@app.get("/prices/ticks", response_model=list[PriceTick])
+def price_ticks(
+    conn=Depends(get_db),
+    ticker: Optional[Literal["BZ=F", "CL=F"]] = Query(None),
+    hours: int = Query(24, ge=1, le=24 * 14, description="How far back from the latest tick on record"),
+):
+    """Intraday yfinance ticks — the live 'Brent tick-up' evidence line."""
+    where = ["ts >= (SELECT max(ts) FROM price_ticks) - %s * INTERVAL '1 hour'"]
+    params: list = [hours]
+    if ticker:
+        where.append("ticker = %s")
+        params.append(ticker)
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT ts, ticker, usd FROM price_ticks WHERE {' AND '.join(where)} ORDER BY ts;",
+            params,
+        )
+        return [PriceTick(**r) for r in cur.fetchall()]
+
+
+@app.get("/prices/latest")
+def latest_prices(conn=Depends(get_db)):
+    """Latest daily close per EIA ticker and latest intraday tick per futures
+    ticker, in one call — what a dashboard header needs."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT ON (ticker) day, ticker, usd, source
+            FROM prices ORDER BY ticker, day DESC;
+            """
+        )
+        daily = cur.fetchall()
+        cur.execute(
+            """
+            SELECT DISTINCT ON (ticker) ts, ticker, usd
+            FROM price_ticks ORDER BY ticker, ts DESC;
+            """
+        )
+        ticks = cur.fetchall()
+    return {"daily": daily, "intraday": ticks}
+
+
+VESSEL_LATEST_SQL = """
+SELECT DISTINCT ON (v.mmsi)
+       v.mmsi, v.lat, v.lon, v.sog, v.cog, v.ts, v.name,
+       (s.ent_num IS NOT NULL) AS sanctioned,
+       CASE
+         WHEN s.remarks LIKE '%%MMSI ' || v.mmsi::text || '%%' THEN 'mmsi'
+         WHEN s.ent_num IS NOT NULL THEN 'name'
+       END AS sanction_match
+FROM vessels v
+LEFT JOIN sanctions s
+  ON lower(s.sdn_type) = 'vessel'
+ AND (   (s.remarks IS NOT NULL AND s.remarks LIKE '%%MMSI ' || v.mmsi::text || '%%')
+      OR (s.name IS NOT NULL AND v.name IS NOT NULL
+          AND upper(trim(v.name)) = upper(trim(s.name))) )
+{extra_where}
+ORDER BY v.mmsi, v.ts DESC,
+         (s.remarks LIKE '%%MMSI ' || v.mmsi::text || '%%') DESC NULLS LAST
+LIMIT %s;
+"""
+
+
+@app.get("/vessels/latest", response_model=list[VesselPosition])
+def latest_vessels(
+    conn=Depends(get_db),
+    limit: int = Query(1000, ge=1, le=10000),
+):
+    """Latest known position per vessel, each flagged if its AIS ship name
+    matches an OFAC-sanctioned vessel. This powers the live map layer."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(VESSEL_LATEST_SQL.format(extra_where=""), (limit,))
+        return [VesselPosition(**r) for r in cur.fetchall()]
+
+
+@app.get("/vessels/sanctioned", response_model=list[VesselPosition])
+def sanctioned_vessels_live(
+    conn=Depends(get_db),
+    limit: int = Query(1000, ge=1, le=10000),
+):
+    """Only the vessels currently in the AIS window whose name matches an
+    OFAC SDN vessel entry — the 'sanctions flag' evidence line on the map."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(VESSEL_LATEST_SQL.format(extra_where="WHERE s.ent_num IS NOT NULL"), (limit,))
+        return [VesselPosition(**r) for r in cur.fetchall()]
+
+
+@app.get("/imports/india", response_model=list[IndiaImportRow])
+def india_imports(
+    conn=Depends(get_db),
+    product: str = Query("CRUDE OIL", description="e.g. 'CRUDE OIL', 'LPG', 'NET IMPORT'"),
+    trade: Literal["Import", "Export"] = Query("Import"),
+):
+    """PPAC monthly quantity + value series — the rupees-and-days grounding
+    for the impact model (import bill, reserve-cover maths)."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT period, product, trade, quantity_tmt, value_inr_cr, value_usd_mn
+            FROM imports_india
+            WHERE upper(product) = upper(%s) AND trade = %s AND period IS NOT NULL
+            ORDER BY period;
+            """,
+            (product, trade),
+        )
+        return [IndiaImportRow(**r) for r in cur.fetchall()]
+
+
+@app.get("/sanctions/vessels", response_model=list[SanctionedVessel])
+def sanctioned_vessel_registry(
+    conn=Depends(get_db),
+    search: Optional[str] = Query(None, description="Case-insensitive substring match on vessel name"),
+    limit: int = Query(100, ge=1, le=5000),
+):
+    """The OFAC SDN vessel registry itself (not joined to AIS)."""
+    where = ["lower(sdn_type) = 'vessel'"]
+    params: list = []
+    if search:
+        where.append("name ILIKE %s")
+        params.append(f"%{search}%")
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT ent_num, name, program, vessel_flag, remarks
+            FROM sanctions WHERE {' AND '.join(where)}
+            ORDER BY name LIMIT %s;
+            """,
+            params + [limit],
+        )
+        return [SanctionedVessel(**r) for r in cur.fetchall()]
+
+
+@app.get("/freshness")
+def freshness(conn=Depends(get_db)):
+    """When each feed last loaded (from ingest_runs) plus live row counts —
+    lets the dashboard show 'data as of' per source, and lets anyone verify
+    the pipeline is actually running."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT feed, last_run, last_status, last_rows, note FROM ingest_runs ORDER BY feed;")
+        runs = [FeedFreshness(**r) for r in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT 'prices' AS t, count(*) AS n FROM prices
+            UNION ALL SELECT 'price_ticks', count(*) FROM price_ticks
+            UNION ALL SELECT 'sanctions', count(*) FROM sanctions
+            UNION ALL SELECT 'vessels', count(*) FROM vessels
+            UNION ALL SELECT 'imports_india', count(*) FROM imports_india
+            UNION ALL SELECT 'structured_events', count(*) FROM structured_events;
+            """
+        )
+        counts = {r["t"]: r["n"] for r in cur.fetchall()}
+    return {"feeds": runs, "table_counts": counts}

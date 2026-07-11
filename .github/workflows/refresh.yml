@@ -1,0 +1,51 @@
+# Cloud auto-refresh: runs the ingestion controller on a schedule so Neon
+# stays fresh 24/7, independent of anyone's laptop.
+#
+# Cadence gating lives in the DB (ingest_runs), so this can fire every 30 min
+# cheaply: most invocations only refresh the fast feeds (yfinance ticks, AIS
+# snapshot); EIA/OFAC run ~daily and GDELT every ~4h automatically.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   DATABASE_URL        the shared Neon connection string
+#   EIA_API_KEY         free key from https://www.eia.gov/opendata/
+#   AISSTREAM_API_KEY   free key from https://aisstream.io/
+#
+# Notes:
+#   - GitHub cron is best-effort (runs can be minutes late or occasionally
+#     skipped). Fine for freshness; the live demo runs its own local loop.
+#   - Scheduled workflows only run from the DEFAULT branch, and GitHub
+#     disables them after 60 days without repo activity.
+
+name: refresh-data
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}   # manual "Run workflow" button for testing
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run ingestion controller
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
+          GDELT_SOURCE: public       # no GCP credentials in CI; public dumps need none
+          AIS_SECONDS: "90"
+        run: python controller.py

@@ -1,8 +1,19 @@
+import os
+
 import pandas as pd
 import json
 
 events_df = pd.read_csv("gdelt_events_with_mentions.csv")
-gkg_df = pd.read_csv("gdelt_gkg_events.csv")
+
+# GKG context is optional: the public/no-key fetch path (fetch_public.py)
+# produces events only. Without it every bundle gets empty context_articles
+# and extract.py falls back to CAMEO-code categorisation.
+if os.path.exists("gdelt_gkg_events.csv"):
+    gkg_df = pd.read_csv("gdelt_gkg_events.csv")
+else:
+    print("No gdelt_gkg_events.csv found — building bundles without GKG context.")
+    gkg_df = pd.DataFrame(columns=["DATE", "SourceCommonName", "DocumentIdentifier",
+                                   "Themes", "Locations", "Persons", "Organizations", "Tone"])
 
 events_df['date_only'] = events_df['SQLDATE'].astype(str)
 gkg_df['date_only'] = gkg_df['DATE'].astype(str).str[:8]
@@ -89,8 +100,9 @@ with open("event_bundles.json", "w") as f:
     json.dump(bundles, f, indent=2)
 
 print("Saved to event_bundles.json")
-print("\nSample bundle:")
-print(json.dumps(bundles[0], indent=2))
+if bundles:
+    print("\nSample bundle:")
+    print(json.dumps(bundles[0], indent=2))
 
 # Spot check: print a few bundles for Iran/Yemen/Saudi actors specifically,
 # since those matter most for your actual use case

@@ -1,0 +1,83 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+
+# Keep template env file
+!.env.example
+
+# =========================
+# macOS
+# =========================
+.DS_Store
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Generated Data
+# =========================
+event_bundles.json
+structured_events.json
+structured_events_retry.json
+
+gdelt_events_with_mentions.csv
+gdelt_gkg_events.csv
+
+failed_bundles.json
+failed_bundles_2.json
+
+llm_failed_events.json
+llm_reviewed_events.json
+
+checkpoint.json
+free_models_cache.json
+
+# =========================
+# Python Cache
+# =========================
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# =========================
+# Coverage
+# =========================
+.coverage
+htmlcov/
+
+# =========================
+# Build
+# =========================
+dist/
+build/
+*.egg-info/
+
+# =========================
+# Temporary files
+# =========================
+*.tmp
+*.bak
+*.swp

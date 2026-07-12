@@ -5,8 +5,7 @@ Run from the repo root:  python3 -m datapipeline.ofac.loader
 import csv
 import io
 
-import requests
-
+from datapipeline.common import http
 from datapipeline.common.db import upsert
 
 URL = "https://www.treasury.gov/ofac/downloads/sdn.csv"
@@ -21,7 +20,7 @@ def clean(v):
 
 
 def main():
-    r = requests.get(URL, timeout=60)
+    r = http.get(URL, timeout=60)
     r.raise_for_status()
     rows = []
     for rec in csv.reader(io.StringIO(r.text)):
@@ -34,6 +33,12 @@ def main():
             continue
         rows.append((ent, clean(d["name"]), clean(d["sdn_type"]),
                      clean(d["program"]), clean(d["vess_flag"]), clean(d["remarks"])))
+    # The real SDN list has ~15k+ entries; far fewer means a truncated or
+    # error-page download — fail loudly instead of loading a partial list
+    # (upsert would silently leave the table looking fine but stale).
+    if len(rows) < 1000:
+        raise RuntimeError(f"OFAC download looks truncated: only {len(rows)} rows parsed")
+
     upsert("sanctions", ["ent_num", "name", "sdn_type", "program", "vessel_flag", "remarks"],
            rows, conflict=["ent_num"])
     vessels = sum(1 for x in rows if (x[2] or "").lower() == "vessel")

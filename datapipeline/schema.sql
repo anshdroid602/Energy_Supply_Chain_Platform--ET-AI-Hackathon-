@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS structured_events (
     event_date          DATE,
     actors              TEXT[],
     location_country    TEXT,
+    lat                 DOUBLE PRECISION,
+    lon                 DOUBLE PRECISION,
     corridor_affected   TEXT,
     event_category      TEXT,
     severity_score      REAL,
@@ -66,6 +68,11 @@ CREATE TABLE IF NOT EXISTS structured_events (
     summary             TEXT,
     loaded_at           TIMESTAMPTZ DEFAULT now()
 );
+
+-- self-migrate tables created before lat/lon existed
+ALTER TABLE structured_events
+    ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_structured_events_corridor
     ON structured_events (corridor_affected);

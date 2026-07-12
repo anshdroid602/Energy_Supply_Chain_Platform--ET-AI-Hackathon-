@@ -37,6 +37,19 @@ CORRIDOR_MAP = {
     "EG": "Suez Canal",         # Egypt (FIPS == ISO2)
 }
 
+# Geofences around the corridors themselves (lat_min, lat_max, lon_min,
+# lon_max), checked in order — first hit wins, so the tighter Hormuz/Suez
+# boxes come before the wider Red Sea / Persian Gulf ones. An event with
+# coordinates gets assigned by WHERE it happened; the country map above is
+# only the fallback for events without usable coordinates (or coordinates
+# outside every box, e.g. inland capitals).
+CORRIDOR_BOXES = [
+    ("Strait of Hormuz", 24.0, 28.5, 54.0, 58.5),
+    ("Suez Canal",       29.0, 31.6, 31.8, 33.5),
+    ("Red Sea",          11.0, 28.0, 32.0, 44.5),
+    ("Persian Gulf",     23.5, 30.5, 47.0, 56.5),
+]
+
 # CAMEO root codes 01-05 are the "verbal cooperation" quad class (public
 # statement, appeal, intend to cooperate, consult, diplomatic cooperation) —
 # used here as the deterministic stand-in for "diplomatic interaction codes".
@@ -87,7 +100,11 @@ def extract_actors(event):
     return actors
 
 
-def extract_corridor(location_country):
+def extract_corridor(location_country, lat=None, lon=None):
+    if lat is not None and lon is not None:
+        for name, lat_min, lat_max, lon_min, lon_max in CORRIDOR_BOXES:
+            if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+                return name
     return CORRIDOR_MAP.get(location_country, "none")
 
 
@@ -194,6 +211,8 @@ def process_event(event):
 
     actors = extract_actors(event)
     location_country = event.get("location_country")
+    lat = event.get("action_lat")
+    lon = event.get("action_lon")
     category = extract_event_category(event, all_themes)
 
     return {
@@ -201,7 +220,9 @@ def process_event(event):
         "event_date": extract_event_date(event.get("event_date")),
         "actors": actors,
         "location_country": location_country,
-        "corridor_affected": extract_corridor(location_country),
+        "lat": lat,
+        "lon": lon,
+        "corridor_affected": extract_corridor(location_country, lat, lon),
         "event_category": category,
         "severity_score": extract_severity_score(event),
         "confidence": extract_confidence(event, context_articles),
@@ -222,6 +243,8 @@ def safe_process_event(event, index):
             "event_date": extract_event_date(event.get("event_date")) if isinstance(event, dict) else "",
             "actors": [],
             "location_country": event.get("location_country") if isinstance(event, dict) else None,
+            "lat": None,
+            "lon": None,
             "corridor_affected": "none",
             "event_category": "other",
             "severity_score": 0.0,

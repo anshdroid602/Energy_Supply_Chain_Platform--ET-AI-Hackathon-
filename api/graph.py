@@ -31,7 +31,8 @@ SEED_PATH = os.path.join(os.path.dirname(__file__), "graph_seed.json")
 CORRIDOR_RISK_SQL = """
 SELECT corridor_affected,
        SUM(severity_score / 10.0 * confidence * POWER(0.5, GREATEST(CURRENT_DATE - event_date, 0) / %s))
-     / NULLIF(SUM(confidence * POWER(0.5, GREATEST(CURRENT_DATE - event_date, 0) / %s)), 0) AS risk
+     / NULLIF(SUM(confidence * POWER(0.5, GREATEST(CURRENT_DATE - event_date, 0) / %s)), 0) AS risk,
+       COUNT(*) AS n_events
 FROM structured_events
 WHERE event_date >= (CURRENT_DATE - %s * INTERVAL '1 day')
 GROUP BY corridor_affected;
@@ -57,19 +58,23 @@ def get_graph():
 
 
 def corridor_risks(conn, window_days=30, half_life_days=7.0):
+    """corridor -> {'risk': 0-1, 'events': n} for corridors with events."""
     with conn.cursor() as cur:
         cur.execute(CORRIDOR_RISK_SQL, (half_life_days, half_life_days, window_days))
-        return {row[0]: round(float(row[1]), 3) for row in cur.fetchall()
-                if row[1] is not None}
+        return {row[0]: {"risk": round(float(row[1]), 3), "events": int(row[2])}
+                for row in cur.fetchall() if row[1] is not None}
 
 
 def overlay_risk(g, risks):
-    """Write the live corridor risk onto each chokepoint node."""
+    """Write the live corridor risk (and how many events back it) onto each
+    chokepoint node. risk_events lets consumers judge evidence strength —
+    a 0.9 from 3 events is not the same as a 0.9 from 300."""
     for _, data in g.nodes(data=True):
         if data.get("type") == "chokepoint":
             corridor = data.get("risk_corridor")
-            data["risk"] = risks.get(corridor, data.get("base_risk", 0.0)) if corridor \
-                else data.get("base_risk", 0.0)
+            entry = risks.get(corridor) if corridor else None
+            data["risk"] = entry["risk"] if entry else data.get("base_risk", 0.0)
+            data["risk_events"] = entry["events"] if entry else 0
 
 
 def path_metrics(g, path):

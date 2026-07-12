@@ -147,12 +147,30 @@ stuck. Nobody hardcoded that table — it fell out of the graph.
 
 - Severity/confidence formulas are sensible heuristics, not trained models
   — they're transparent and explainable on stage.
-- Risk scores from very few events are statistically thin (the API returns
-  the event count so you can show uncertainty honestly).
+- Risk scores from very few events are statistically thin — so the API now
+  **flags them** (`low_evidence: true` under 10 events, and the graph
+  reports how many events back each chokepoint's risk).
 - Voyage days and import shares in the graph are labeled approximations of
   real figures.
 - Rule of the project: **real-but-cached beats fabricated. Never invent
   numbers.**
+
+## 8b. Hardening added before shipping
+
+- **Geofenced corridors:** every news event carries its real coordinates
+  now; an event *at* the Strait of Hormuz and a protest in inland Iran are
+  no longer lumped together. Coordinates are stored, so the map can plot
+  the actual evidence dots.
+- **Input validation:** crude prices outside $1–500/bbl are rejected as
+  data errors; a truncated sanctions download fails loudly instead of
+  silently loading a partial list.
+- **Retries:** downloads retry with backoff, so one network blip in the
+  cloud refresher doesn't drop a feed for 30 minutes.
+- **Tests + CI:** 25+ unit tests (extraction rules, graph routing, dump
+  parser) run automatically on every push via GitHub Actions.
+- **Staleness flags:** `/freshness` marks any feed that hasn't refreshed
+  within ~2× its expected cadence, so the dashboard can show "data
+  overdue" honestly.
 
 ---
 

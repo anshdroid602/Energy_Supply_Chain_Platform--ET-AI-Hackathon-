@@ -86,8 +86,8 @@ machine-readable schema for agents at `/openapi.json`.
 
 | Endpoint | What |
 |---|---|
-| `GET /events`, `/events/{id}`, `/meta` | filtered GDELT risk events |
-| `GET /corridors`, `/corridors/{c}/risk-score` | per-corridor stats + 0–1 recency/confidence-weighted risk score |
+| `GET /events`, `/events/{id}`, `/meta` | filtered GDELT risk events (each with lat/lon for the map's evidence layer) |
+| `GET /corridors`, `/corridors/{c}/risk-score` | per-corridor stats + 0–1 recency/confidence-weighted risk score; `low_evidence` flags scores backed by fewer than `min_events` events |
 | `GET /prices/daily`, `/prices/ticks`, `/prices/latest` | EIA daily + yfinance intraday |
 | `GET /vessels/latest`, `/vessels/sanctioned` | latest AIS position per ship, flagged against OFAC vessel names |
 | `GET /imports/india` | PPAC monthly quantity/value series |
@@ -95,7 +95,7 @@ machine-readable schema for agents at `/openapi.json`.
 | `GET /graph` | the full supply-chain knowledge graph (nodes carry lat/lon for the map) with live chokepoint risk |
 | `GET /graph/routes?supplier=X&refinery=Y` | every route between a supplier and a refinery, with ETA + per-chokepoint risk |
 | `GET /graph/alternatives?refinery=Y&max_risk=0.5` | ranked supplier options given today's risk — the Procurement agent's input |
-| `GET /freshness` | last run per feed + row counts (the "data as of" panel) |
+| `GET /freshness` | last run per feed (with a `stale` flag) + row counts (the "data as of" panel) |
 | `GET /health` | liveness |
 
 ## Knowledge graph (`api/graph.py` + `api/graph_seed.json`)
@@ -124,6 +124,25 @@ and `--source bigquery` (needs GCP credentials; adds the mentions join + GKG
 theme context, now on partitioned tables with a rolling date window). The
 extract stage is deterministic by default, with optional LLM review
 (`--extractor hybrid`).
+
+Corridor assignment is **geofenced**: every event carries GDELT's lat/lon,
+and coordinates inside a corridor's bounding box win over the country-code
+fallback — so a strike *at* Hormuz and a protest in inland Iran are no
+longer the same thing. The coordinates are stored (`structured_events.lat/lon`)
+so the frontend can plot the actual evidence on the map.
+
+## Tests & CI
+
+```bash
+pytest tests/ -q
+```
+
+Unit tests cover the extraction rules (geofencing, CAMEO fallbacks, score
+bounds), the knowledge graph (crisis routing, path-risk math), and the GDELT
+dump parser (synthetic 58-column file — catches silent column shifts).
+`.github/workflows/ci.yml` runs them on every push/PR. Loaders also validate
+inputs at runtime: crude prices outside $1–500/bbl are rejected, and a
+truncated OFAC download fails loudly instead of loading a partial list.
 
 ## Known data caveats (read before demoing)
 

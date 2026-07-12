@@ -77,6 +77,8 @@ for _, event in events_df.iterrows():
         for _, row in top_matches.iterrows()
     ]
 
+    lat = event.get('ActionGeo_Lat')
+    lon = event.get('ActionGeo_Long')
     bundle = {
         "event_id": str(event['GlobalEventID']),
         "event_date": event_date,
@@ -87,6 +89,8 @@ for _, event in events_df.iterrows():
         "num_mentions": event['NumMentions'],
         "avg_tone": event['AvgTone'],
         "location_country": event_country,
+        "action_lat": float(lat) if pd.notna(lat) else None,
+        "action_lon": float(lon) if pd.notna(lon) else None,
         "mention_count": event['mention_count'] if pd.notna(event['mention_count']) else 0,
         "avg_mention_tone": event['avg_mention_tone'] if pd.notna(event['avg_mention_tone']) else None,
         "context_articles": context_articles

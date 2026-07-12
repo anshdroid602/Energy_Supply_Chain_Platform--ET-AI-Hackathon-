@@ -27,6 +27,14 @@ from datetime import date, timedelta
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# Retry transient failures — this runs unattended in CI, where one network
+# blip would otherwise silently drop a whole day of events.
+SESSION = requests.Session()
+SESSION.mount("http://", HTTPAdapter(max_retries=Retry(
+    total=3, backoff_factor=2.0, status_forcelist=(429, 500, 502, 503, 504))))
 
 BASE_URL = "http://data.gdeltproject.org/events/{d}.export.CSV.zip"
 OUTPUT = "gdelt_events_with_mentions.csv"
@@ -47,30 +55,24 @@ COL = {
     "NumMentions": 31,
     "AvgTone": 34,
     "ActionGeo_CountryCode": 51,
+    "ActionGeo_Lat": 53,
+    "ActionGeo_Long": 54,
 }
 
 
-def fetch_day(d):
-    """Download one daily file; returns a filtered DataFrame or None on 404."""
-    url = BASE_URL.format(d=d.strftime("%Y%m%d"))
-    r = requests.get(url, timeout=120)
-    if r.status_code == 404:
-        return None  # file not published yet (today/very recent) — fine
-    r.raise_for_status()
-
-    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        with z.open(z.namelist()[0]) as f:
-            df = pd.read_csv(
-                f, sep="\t", header=None, dtype=str,
-                usecols=list(COL.values()), na_filter=False,
-                quoting=3,  # csv.QUOTE_NONE — raw GDELT text contains stray quotes
-            )
+def parse_day_csv(f):
+    """Parse one daily export file-object into a filtered DataFrame.
+    Split out from fetch_day so tests can feed it synthetic data."""
+    df = pd.read_csv(
+        f, sep="\t", header=None, dtype=str,
+        usecols=list(COL.values()), na_filter=False,
+        quoting=3,  # csv.QUOTE_NONE — raw GDELT text contains stray quotes
+    )
     df.columns = [name for name, _ in sorted(COL.items(), key=lambda kv: kv[1])]
 
-    df["GoldsteinScale"] = pd.to_numeric(df["GoldsteinScale"], errors="coerce")
-    df["NumMentions"] = pd.to_numeric(df["NumMentions"], errors="coerce")
-    df["AvgTone"] = pd.to_numeric(df["AvgTone"], errors="coerce")
-    df["SQLDATE"] = pd.to_numeric(df["SQLDATE"], errors="coerce")
+    for col in ("GoldsteinScale", "NumMentions", "AvgTone", "SQLDATE",
+                "ActionGeo_Lat", "ActionGeo_Long"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # Daily files are keyed by report date and can re-report much older
     # events; keep SQLDATE inside the window like the BigQuery query does.
@@ -81,6 +83,19 @@ def fetch_day(d):
         & (df["SQLDATE"] >= start_sqldate)
     )
     return df[keep].copy()
+
+
+def fetch_day(d):
+    """Download one daily file; returns a filtered DataFrame or None on 404."""
+    url = BASE_URL.format(d=d.strftime("%Y%m%d"))
+    r = SESSION.get(url, timeout=120)
+    if r.status_code == 404:
+        return None  # file not published yet (today/very recent) — fine
+    r.raise_for_status()
+
+    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        with z.open(z.namelist()[0]) as f:
+            return parse_day_csv(f)
 
 
 def main():
@@ -125,6 +140,7 @@ def main():
     df["max_confidence"] = None
     out_cols = ["GlobalEventID", "EventCode", "Actor1CountryCode", "Actor2CountryCode",
                 "GoldsteinScale", "NumMentions", "AvgTone", "ActionGeo_CountryCode",
+                "ActionGeo_Lat", "ActionGeo_Long",
                 "SQLDATE", "avg_mention_tone", "mention_count", "max_confidence"]
     df = df.sort_values("GoldsteinScale")[out_cols]
 

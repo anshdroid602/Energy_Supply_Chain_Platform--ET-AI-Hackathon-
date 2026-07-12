@@ -12,6 +12,10 @@ networkx
 # LLM extraction stages (extract_events.py / hybrid_extract.py) — free-tier OpenRouter
 openai
 
+# Tests (tests/, run by .github/workflows/ci.yml)
+pytest
+httpx  # fastapi TestClient
+
 # Only for the BigQuery GDELT path (gdelt.py / gkg.py); the default public
 # path doesn't need it. Uncomment if you have GCP credentials:
 # google-cloud-bigquery

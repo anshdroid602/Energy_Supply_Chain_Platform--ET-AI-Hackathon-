@@ -43,6 +43,8 @@ WITH filtered_events AS (
     NumMentions,
     AvgTone,
     ActionGeo_CountryCode,
+    ActionGeo_Lat,
+    ActionGeo_Long,
     SQLDATE
   FROM `gdelt-bq.gdeltv2.events_partitioned`
   WHERE

@@ -75,6 +75,8 @@ class Event(BaseModel):
     event_date: Optional[date]
     actors: list[str]
     location_country: Optional[str]
+    lat: Optional[float] = None    # event coordinates (GDELT ActionGeo) — for the map's evidence layer
+    lon: Optional[float] = None
     corridor_affected: str
     event_category: str
     severity_score: float
@@ -104,6 +106,7 @@ class RiskScore(BaseModel):
     risk_score: float = Field(..., ge=0, le=1, description="0-1 confidence-and-recency-weighted severity")
     risk_level: Literal["Low", "Medium", "High", "Critical"]
     event_count_in_window: int
+    low_evidence: bool = Field(False, description="True when fewer than min_events events back this score — treat the number as indicative, not conclusive")
     top_events: list[Event]
 
 
@@ -148,6 +151,8 @@ def row_to_event(row: dict) -> Event:
         event_date=row["event_date"],
         actors=row["actors"] or [],
         location_country=row["location_country"],
+        lat=row.get("lat"),
+        lon=row.get("lon"),
         corridor_affected=row["corridor_affected"],
         event_category=row["event_category"],
         severity_score=row["severity_score"],
@@ -234,7 +239,7 @@ def list_events(
 
         cur.execute(
             f"""
-            SELECT event_id, event_date, actors, location_country, corridor_affected,
+            SELECT event_id, event_date, actors, location_country, lat, lon, corridor_affected,
                    event_category, severity_score, confidence, summary
             FROM structured_events
             {where_clause}
@@ -258,7 +263,7 @@ def get_event(event_id: str, conn=Depends(get_db)):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT event_id, event_date, actors, location_country, corridor_affected,
+            SELECT event_id, event_date, actors, location_country, lat, lon, corridor_affected,
                    event_category, severity_score, confidence, summary
             FROM structured_events WHERE event_id = %s;
             """,
@@ -307,6 +312,7 @@ def corridor_risk_score(
     window_days: int = Query(30, ge=1, le=365, description="Only consider events within this many days of today"),
     half_life_days: float = Query(7.0, gt=0, description="Recency decay half-life: an event this many days old counts half as much"),
     top_n: int = Query(5, ge=0, le=50, description="How many top-contributing events to return alongside the score"),
+    min_events: int = Query(10, ge=1, description="Below this many events the score is flagged low_evidence"),
 ):
     """
     Deterministic risk score for a corridor: confidence- and recency-weighted
@@ -322,7 +328,7 @@ def corridor_risk_score(
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT event_id, event_date, actors, location_country, corridor_affected,
+            SELECT event_id, event_date, actors, location_country, lat, lon, corridor_affected,
                    event_category, severity_score, confidence, summary
             FROM structured_events
             WHERE corridor_affected = %s
@@ -341,6 +347,7 @@ def corridor_risk_score(
             risk_score=0.0,
             risk_level="Low",
             event_count_in_window=0,
+            low_evidence=True,
             top_events=[],
         )
 
@@ -368,6 +375,7 @@ def corridor_risk_score(
         risk_score=risk_score,
         risk_level=risk_level_for(risk_score),
         event_count_in_window=len(rows),
+        low_evidence=len(rows) < min_events,
         top_events=top_events,
     )
 
@@ -428,6 +436,20 @@ class FeedFreshness(BaseModel):
     last_status: Optional[str]
     last_rows: Optional[int]
     note: Optional[str]
+    stale: bool = Field(False, description="True when the feed hasn't run successfully within ~2x its expected cadence")
+
+
+# Expected max age per feed (~2x the controller cadence) — used only to set
+# the `stale` flag so the dashboard can show 'overdue' without knowing
+# controller internals.
+FEED_MAX_AGE_HOURS = {
+    "eia": 44.0,
+    "market_prices": 1.0,
+    "ofac": 44.0,
+    "ppac": 26 * 24.0,   # monthly data, refreshed daily-ish is plenty
+    "ais": 1.0,
+    "gdelt": 9.0,
+}
 
 
 @app.get("/prices/daily", response_model=list[DailyPrice])
@@ -646,6 +668,8 @@ def graph_alternatives(
         "max_risk": max_risk,
         "chokepoint_risk": {n: d.get("risk", 0.0) for n, d in g.nodes(data=True)
                             if d.get("type") == "chokepoint"},
+        "chokepoint_evidence": {n: d.get("risk_events", 0) for n, d in g.nodes(data=True)
+                                if d.get("type") == "chokepoint"},
         "options": kg.alternatives(g, refinery, max_risk),
     }
 
@@ -655,9 +679,19 @@ def freshness(conn=Depends(get_db)):
     """When each feed last loaded (from ingest_runs) plus live row counts —
     lets the dashboard show 'data as of' per source, and lets anyone verify
     the pipeline is actually running."""
+    now = datetime.now(timezone.utc)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT feed, last_run, last_status, last_rows, note FROM ingest_runs ORDER BY feed;")
-        runs = [FeedFreshness(**r) for r in cur.fetchall()]
+        runs = []
+        for r in cur.fetchall():
+            max_age = FEED_MAX_AGE_HOURS.get(r["feed"])
+            age_h = (now - r["last_run"]).total_seconds() / 3600 if r["last_run"] else None
+            stale = bool(
+                r["last_status"] != "ok"
+                or age_h is None
+                or (max_age is not None and age_h > max_age)
+            )
+            runs.append(FeedFreshness(**r, stale=stale))
         cur.execute(
             """
             SELECT 'prices' AS t, count(*) AS n FROM prices

@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS structured_events (
     event_date          DATE,
     actors              TEXT[],
     location_country    TEXT,
+    lat                 DOUBLE PRECISION,
+    lon                 DOUBLE PRECISION,
     corridor_affected   TEXT,
     event_category      TEXT,
     severity_score      REAL,
@@ -36,6 +38,11 @@ CREATE TABLE IF NOT EXISTS structured_events (
     summary             TEXT,
     loaded_at           TIMESTAMPTZ DEFAULT now()
 );
+
+-- self-migrate tables created before lat/lon existed
+ALTER TABLE structured_events
+    ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS idx_structured_events_corridor
     ON structured_events (corridor_affected);
@@ -47,7 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_structured_events_severity
 
 UPSERT_SQL = """
 INSERT INTO structured_events (
-    event_id, event_date, actors, location_country,
+    event_id, event_date, actors, location_country, lat, lon,
     corridor_affected, event_category, severity_score, confidence, summary
 )
 VALUES %s
@@ -55,6 +62,8 @@ ON CONFLICT (event_id) DO UPDATE SET
     event_date        = EXCLUDED.event_date,
     actors             = EXCLUDED.actors,
     location_country   = EXCLUDED.location_country,
+    lat                = EXCLUDED.lat,
+    lon                = EXCLUDED.lon,
     corridor_affected  = EXCLUDED.corridor_affected,
     event_category     = EXCLUDED.event_category,
     severity_score     = EXCLUDED.severity_score,
@@ -70,6 +79,8 @@ def to_row(event):
         event.get("event_date") or None,   # already YYYY-MM-DD, Postgres parses it directly
         event.get("actors") or [],
         event.get("location_country"),
+        event.get("lat"),
+        event.get("lon"),
         event.get("corridor_affected"),
         event.get("event_category"),
         event.get("severity_score"),

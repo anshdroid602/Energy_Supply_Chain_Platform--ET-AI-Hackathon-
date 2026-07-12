@@ -15,12 +15,12 @@ Design notes:
     and the risk score already down-weights old events by recency.
   - All loaders are idempotent (upserts), so overlapping runs are safe.
 
-Usage (from the repo root):
-  python3 controller.py                 # run whatever is due, then exit
-  python3 controller.py --force         # ignore cadence, run everything now
-  python3 controller.py --only ais --only market_prices
-  python3 controller.py --skip gdelt
-  python3 controller.py --loop 300      # keep running, wake every 300s (demo laptop mode)
+Usage (from the repo root — note the -m, this file lives inside the package):
+  python3 -m datapipeline.controller                 # run whatever is due, then exit
+  python3 -m datapipeline.controller --force         # ignore cadence, run everything now
+  python3 -m datapipeline.controller --only ais --only market_prices
+  python3 -m datapipeline.controller --skip gdelt
+  python3 -m datapipeline.controller --loop 300      # keep running, wake every 300s (demo laptop mode)
 
 Env knobs:
   GDELT_SOURCE            public | bigquery   (default public)
@@ -42,8 +42,8 @@ except ImportError:
 
 from datapipeline.common import db
 
-GDELT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                         "datapipeline", "gdelt_and_gkg")
+# This file lives inside datapipeline/, so the gdelt pipeline is a sibling dir.
+GDELT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gdelt_and_gkg")
 
 
 def run_gdelt_pipeline():

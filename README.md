@@ -14,7 +14,7 @@ scenario model, and the frontend all build on top of this.
  GDELT dumps/BQ ─► gdelt_and_gkg/ pipeline ► structured_events ┘
                  └──────────────▲───────────────────────────────────────────────┘
                                 │ reruns on cadence, prunes stale AIS
-                          controller.py                    api/main.py (FastAPI)
+                          datapipeline/controller.py       api/main.py (FastAPI)
                     (laptop loop or GitHub Actions)         ▲ frontend + agents
 ```
 
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 cp .env.example .env          # paste the team DATABASE_URL + your free keys
 
 python3 -m datapipeline.init_db   # create all tables (idempotent)
-python3 controller.py --force     # load every feed right now
+python3 -m datapipeline.controller --force     # load every feed right now
 uvicorn api.main:app --reload --port 8000
 open http://localhost:8000/docs
 ```
@@ -48,17 +48,17 @@ If you only consume data, you don't need any API keys — just `DATABASE_URL`
 
 Every loader is idempotent (upserts) — rerunning anything is always safe.
 
-## The controller (`controller.py`)
+## The controller (`datapipeline/controller.py`)
 
 One entry point that runs whatever is due, based on per-feed cadences stored
 in the `ingest_runs` table (so any machine — laptop, cron, GitHub Actions —
 can pick up where the last run left off):
 
 ```bash
-python3 controller.py                 # run whatever is due, exit
-python3 controller.py --force         # ignore cadences, run everything
-python3 controller.py --only ais      # just one feed (repeatable)
-python3 controller.py --loop 300      # demo-laptop mode: rerun every 5 min
+python3 -m datapipeline.controller                 # run whatever is due, exit
+python3 -m datapipeline.controller --force         # ignore cadences, run everything
+python3 -m datapipeline.controller --only ais      # just one feed (repeatable)
+python3 -m datapipeline.controller --loop 300      # demo-laptop mode: rerun every 5 min
 ```
 
 Sliding-window policy: GDELT always fetches a rolling `GDELT_WINDOW_DAYS`
@@ -76,7 +76,7 @@ Actions secrets — `DATABASE_URL`, `EIA_API_KEY`, `AISSTREAM_API_KEY` — under
 default branch. Trigger it manually once from the Actions tab to verify.
 
 GitHub cron is best-effort (minutes late sometimes) — good for freshness, but
-the on-stage "live" element should be `controller.py --loop` on the demo
+the on-stage "live" element should be `datapipeline/controller.py --loop` on the demo
 laptop.
 
 ## The API (`api/main.py`)

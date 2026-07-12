@@ -48,4 +48,4 @@ jobs:
           AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
           GDELT_SOURCE: public       # no GCP credentials in CI; public dumps need none
           AIS_SECONDS: "90"
-        run: python controller.py
+        run: python -m datapipeline.controller

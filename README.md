@@ -92,8 +92,28 @@ machine-readable schema for agents at `/openapi.json`.
 | `GET /vessels/latest`, `/vessels/sanctioned` | latest AIS position per ship, flagged against OFAC vessel names |
 | `GET /imports/india` | PPAC monthly quantity/value series |
 | `GET /sanctions/vessels` | the OFAC vessel registry |
+| `GET /graph` | the full supply-chain knowledge graph (nodes carry lat/lon for the map) with live chokepoint risk |
+| `GET /graph/routes?supplier=X&refinery=Y` | every route between a supplier and a refinery, with ETA + per-chokepoint risk |
+| `GET /graph/alternatives?refinery=Y&max_risk=0.5` | ranked supplier options given today's risk — the Procurement agent's input |
 | `GET /freshness` | last run per feed + row counts (the "data as of" panel) |
 | `GET /health` | liveness |
+
+## Knowledge graph (`api/graph.py` + `api/graph_seed.json`)
+
+A small directed graph of India's real crude supply chain:
+`supplier → export port → chokepoint(s) → Indian port → refinery`
+(~32 nodes, ~48 edges — 7 suppliers, 5 chokepoints, 5 refineries, all real
+infrastructure including the Hormuz bypasses: Saudi's East-West pipeline to
+Yanbu, UAE's ADCOP pipeline to Fujairah, Russia's ESPO to Kozmino).
+
+The skeleton is static (curated seed file, approximate voyage days and FY25
+import shares). The **risk is live**: each chokepoint pulls the same
+recency/confidence-weighted risk score as `/corridors/{c}/risk-score` from
+`structured_events` at query time. So when GDELT news turns Hormuz critical,
+`/graph/alternatives` automatically stops routing through it and returns the
+ranked fallback suppliers with ETAs — which is exactly what the Procurement
+agent recommends and what the reroute map draws. Read-only and derived;
+never written to, never synced.
 
 ## GDELT pipeline specifics
 

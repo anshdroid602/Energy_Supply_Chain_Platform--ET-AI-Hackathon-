@@ -1,0 +1,101 @@
+{
+  "_comment": "Knowledge-graph seed: India's crude supply chain. All infrastructure is real (ports, pipelines, chokepoints, refineries). Numbers are approximations for the hackathon: share_pct ~ FY2024-25 India import mix (PPAC/press ballpark), days ~ laden tanker voyage legs at ~12.5kn. The graph is read-only and derived — live risk comes from structured_events at query time, never stored here.",
+
+  "nodes": [
+    {"id": "Russia",        "type": "supplier", "lat": 55.0,  "lon": 37.6,   "grade": "medium_sour", "grade_name": "Urals / ESPO", "share_pct": 36},
+    {"id": "Iraq",          "type": "supplier", "lat": 33.2,  "lon": 44.4,   "grade": "medium_sour", "grade_name": "Basrah Medium", "share_pct": 19},
+    {"id": "Saudi Arabia",  "type": "supplier", "lat": 24.0,  "lon": 45.0,   "grade": "medium_sour", "grade_name": "Arab Light", "share_pct": 14},
+    {"id": "UAE",           "type": "supplier", "lat": 23.9,  "lon": 54.0,   "grade": "light_sour",  "grade_name": "Murban", "share_pct": 8},
+    {"id": "USA",           "type": "supplier", "lat": 31.0,  "lon": -95.0,  "grade": "light_sweet", "grade_name": "WTI Midland", "share_pct": 5},
+    {"id": "Kuwait",        "type": "supplier", "lat": 29.3,  "lon": 47.5,   "grade": "heavy_sour",  "grade_name": "Kuwait Export", "share_pct": 3},
+    {"id": "Nigeria",       "type": "supplier", "lat": 9.0,   "lon": 8.0,    "grade": "light_sweet", "grade_name": "Bonny Light", "share_pct": 3},
+
+    {"id": "Basra",           "type": "export_port", "lat": 29.67, "lon": 48.80},
+    {"id": "Ras Tanura",      "type": "export_port", "lat": 26.64, "lon": 50.16},
+    {"id": "Yanbu",           "type": "export_port", "lat": 24.05, "lon": 38.00, "note": "Red Sea terminal of the Saudi East-West pipeline (~5 mbpd) — Hormuz bypass"},
+    {"id": "Das Island",      "type": "export_port", "lat": 25.15, "lon": 52.87},
+    {"id": "Fujairah",        "type": "export_port", "lat": 25.11, "lon": 56.34, "note": "Fed by the ADCOP pipeline (~1.5 mbpd), sits OUTSIDE the Strait of Hormuz — UAE's bypass"},
+    {"id": "Mina al-Ahmadi",  "type": "export_port", "lat": 29.06, "lon": 48.17},
+    {"id": "Novorossiysk",    "type": "export_port", "lat": 44.72, "lon": 37.77, "note": "Black Sea; transits the Turkish Straits (folded into the Suez leg)"},
+    {"id": "Kozmino",         "type": "export_port", "lat": 42.74, "lon": 133.08, "note": "Pacific terminus of the ESPO pipeline"},
+    {"id": "Corpus Christi",  "type": "export_port", "lat": 27.80, "lon": -97.40},
+    {"id": "Bonny",           "type": "export_port", "lat": 4.43,  "lon": 7.17},
+
+    {"id": "Strait of Hormuz",  "type": "chokepoint", "lat": 26.6,   "lon": 56.5,  "risk_corridor": "Strait of Hormuz", "base_risk": 0.0},
+    {"id": "Bab el-Mandeb",     "type": "chokepoint", "lat": 12.6,   "lon": 43.3,  "risk_corridor": "Red Sea", "base_risk": 0.0},
+    {"id": "Suez Canal",        "type": "chokepoint", "lat": 30.5,   "lon": 32.35, "risk_corridor": "Suez Canal", "base_risk": 0.0},
+    {"id": "Cape of Good Hope", "type": "chokepoint", "lat": -34.36, "lon": 18.47, "risk_corridor": null, "base_risk": 0.0, "note": "Long but open-ocean route; no tracked corridor risk"},
+    {"id": "Strait of Malacca", "type": "chokepoint", "lat": 2.2,    "lon": 102.2, "risk_corridor": null, "base_risk": 0.0},
+
+    {"id": "Sikka",   "type": "import_port", "lat": 22.43, "lon": 69.83},
+    {"id": "Vadinar", "type": "import_port", "lat": 22.47, "lon": 69.70},
+    {"id": "Mundra",  "type": "import_port", "lat": 22.74, "lon": 69.70},
+    {"id": "Paradip", "type": "import_port", "lat": 20.27, "lon": 86.67},
+    {"id": "Kochi",   "type": "import_port", "lat": 9.97,  "lon": 76.24},
+
+    {"id": "Jamnagar (RIL)",  "type": "refinery", "lat": 22.35, "lon": 69.85, "capacity_kbpd": 1240, "accepts": ["heavy_sour", "medium_sour", "light_sour", "light_sweet"]},
+    {"id": "Vadinar (Nayara)","type": "refinery", "lat": 22.37, "lon": 69.75, "capacity_kbpd": 405,  "accepts": ["heavy_sour", "medium_sour", "light_sour", "light_sweet"]},
+    {"id": "Panipat (IOCL)",  "type": "refinery", "lat": 29.44, "lon": 76.95, "capacity_kbpd": 300,  "accepts": ["medium_sour", "light_sour", "light_sweet"]},
+    {"id": "Paradip (IOCL)",  "type": "refinery", "lat": 20.28, "lon": 86.61, "capacity_kbpd": 300,  "accepts": ["medium_sour", "light_sour", "light_sweet"]},
+    {"id": "Kochi (BPCL)",    "type": "refinery", "lat": 9.96,  "lon": 76.30, "capacity_kbpd": 310,  "accepts": ["medium_sour", "light_sour", "light_sweet"]}
+  ],
+
+  "edges": [
+    {"from": "Iraq",         "to": "Basra",          "days": 0},
+    {"from": "Saudi Arabia", "to": "Ras Tanura",     "days": 0},
+    {"from": "Saudi Arabia", "to": "Yanbu",          "days": 0, "note": "via East-West pipeline"},
+    {"from": "UAE",          "to": "Das Island",     "days": 0},
+    {"from": "UAE",          "to": "Fujairah",       "days": 0, "note": "via ADCOP pipeline, capacity-limited"},
+    {"from": "Kuwait",       "to": "Mina al-Ahmadi", "days": 0},
+    {"from": "Russia",       "to": "Novorossiysk",   "days": 0},
+    {"from": "Russia",       "to": "Kozmino",        "days": 0, "note": "via ESPO pipeline"},
+    {"from": "USA",          "to": "Corpus Christi", "days": 0},
+    {"from": "Nigeria",      "to": "Bonny",          "days": 0},
+
+    {"from": "Basra",          "to": "Strait of Hormuz", "days": 1.5},
+    {"from": "Ras Tanura",     "to": "Strait of Hormuz", "days": 1.0},
+    {"from": "Das Island",     "to": "Strait of Hormuz", "days": 0.5},
+    {"from": "Mina al-Ahmadi", "to": "Strait of Hormuz", "days": 1.5},
+
+    {"from": "Strait of Hormuz", "to": "Sikka",   "days": 3.0},
+    {"from": "Strait of Hormuz", "to": "Vadinar", "days": 3.0},
+    {"from": "Strait of Hormuz", "to": "Mundra",  "days": 3.0},
+    {"from": "Strait of Hormuz", "to": "Kochi",   "days": 4.0},
+    {"from": "Strait of Hormuz", "to": "Paradip", "days": 7.0},
+
+    {"from": "Fujairah", "to": "Sikka",   "days": 2.5},
+    {"from": "Fujairah", "to": "Vadinar", "days": 2.5},
+    {"from": "Fujairah", "to": "Mundra",  "days": 2.5},
+    {"from": "Fujairah", "to": "Kochi",   "days": 3.5},
+
+    {"from": "Yanbu",         "to": "Bab el-Mandeb", "days": 1.5},
+    {"from": "Novorossiysk",  "to": "Suez Canal",    "days": 5.0},
+    {"from": "Corpus Christi","to": "Suez Canal",    "days": 18.0},
+    {"from": "Corpus Christi","to": "Cape of Good Hope", "days": 18.0},
+    {"from": "Bonny",         "to": "Cape of Good Hope", "days": 10.0},
+    {"from": "Suez Canal",    "to": "Bab el-Mandeb", "days": 1.5},
+
+    {"from": "Bab el-Mandeb", "to": "Vadinar", "days": 5.0},
+    {"from": "Bab el-Mandeb", "to": "Sikka",   "days": 5.0},
+    {"from": "Bab el-Mandeb", "to": "Mundra",  "days": 5.0},
+    {"from": "Bab el-Mandeb", "to": "Kochi",   "days": 5.5},
+    {"from": "Bab el-Mandeb", "to": "Paradip", "days": 8.0},
+
+    {"from": "Cape of Good Hope", "to": "Vadinar", "days": 16.0},
+    {"from": "Cape of Good Hope", "to": "Sikka",   "days": 16.0},
+    {"from": "Cape of Good Hope", "to": "Mundra",  "days": 16.0},
+    {"from": "Cape of Good Hope", "to": "Kochi",   "days": 15.0},
+    {"from": "Cape of Good Hope", "to": "Paradip", "days": 17.0},
+
+    {"from": "Kozmino",           "to": "Strait of Malacca", "days": 7.0},
+    {"from": "Strait of Malacca", "to": "Paradip", "days": 5.0},
+    {"from": "Strait of Malacca", "to": "Kochi",   "days": 6.5},
+    {"from": "Strait of Malacca", "to": "Vadinar", "days": 8.0},
+
+    {"from": "Sikka",   "to": "Jamnagar (RIL)",   "days": 0.5},
+    {"from": "Vadinar", "to": "Vadinar (Nayara)", "days": 0.5},
+    {"from": "Mundra",  "to": "Panipat (IOCL)",   "days": 1.0, "note": "Mundra-Panipat crude pipeline"},
+    {"from": "Paradip", "to": "Paradip (IOCL)",   "days": 0.5},
+    {"from": "Kochi",   "to": "Kochi (BPCL)",     "days": 0.5}
+  ]
+}

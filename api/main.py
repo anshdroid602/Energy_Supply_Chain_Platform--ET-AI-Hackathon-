@@ -583,6 +583,73 @@ def sanctioned_vessel_registry(
         return [SanctionedVessel(**r) for r in cur.fetchall()]
 
 
+# ============================================================================
+# Knowledge graph: supplier -> port -> chokepoint -> import port -> refinery,
+# with live corridor risk overlaid from structured_events (see api/graph.py).
+# ============================================================================
+
+from api import graph as kg  # noqa: E402  (import placed with its endpoints)
+
+
+def _live_graph(conn, window_days: int, half_life_days: float):
+    g = kg.get_graph()
+    kg.overlay_risk(g, kg.corridor_risks(conn, window_days, half_life_days))
+    return g
+
+
+@app.get("/graph")
+def full_graph(
+    conn=Depends(get_db),
+    window_days: int = Query(30, ge=1, le=365),
+    half_life_days: float = Query(7.0, gt=0),
+):
+    """The whole supply-chain graph with live chokepoint risk — nodes carry
+    lat/lon so the frontend can draw this straight onto the Leaflet map."""
+    g = _live_graph(conn, window_days, half_life_days)
+    return kg.as_dict(g)
+
+
+@app.get("/graph/routes")
+def graph_routes(
+    conn=Depends(get_db),
+    supplier: str = Query(..., description="e.g. 'Russia', 'Iraq', 'Saudi Arabia'"),
+    refinery: str = Query("Jamnagar (RIL)", description="e.g. 'Jamnagar (RIL)', 'Paradip (IOCL)'"),
+    window_days: int = Query(30, ge=1, le=365),
+    half_life_days: float = Query(7.0, gt=0),
+):
+    """Every way this supplier's crude can reach this refinery, with ETA and
+    per-chokepoint risk, fastest first."""
+    g = _live_graph(conn, window_days, half_life_days)
+    result = kg.routes(g, supplier, refinery)
+    if result is None:
+        raise HTTPException(status_code=404, detail="unknown supplier or refinery id — see /graph for valid ids")
+    return {"supplier": supplier, "refinery": refinery, "routes": result}
+
+
+@app.get("/graph/alternatives")
+def graph_alternatives(
+    conn=Depends(get_db),
+    refinery: str = Query("Jamnagar (RIL)"),
+    max_risk: float = Query(0.5, ge=0, le=1, description="A route is viable only if every chokepoint on it is below this risk"),
+    window_days: int = Query(30, ge=1, le=365),
+    half_life_days: float = Query(7.0, gt=0),
+):
+    """The procurement question: ranked supplier options for this refinery
+    given TODAY'S chokepoint risk — fastest acceptably-safe route per
+    supplier, with grade fit and import share, viable options first. This is
+    what the Procurement agent reasons over and what the reroute map draws."""
+    g = _live_graph(conn, window_days, half_life_days)
+    if refinery not in g:
+        raise HTTPException(status_code=404, detail="unknown refinery id — see /graph for valid ids")
+    return {
+        "refinery": refinery,
+        "max_risk": max_risk,
+        "chokepoint_risk": {n: d.get("risk", 0.0) for n, d in g.nodes(data=True)
+                            if d.get("type") == "chokepoint"},
+        "options": kg.alternatives(g, refinery, max_risk),
+    }
+
+
 @app.get("/freshness")
 def freshness(conn=Depends(get_db)):
     """When each feed last loaded (from ingest_runs) plus live row counts —

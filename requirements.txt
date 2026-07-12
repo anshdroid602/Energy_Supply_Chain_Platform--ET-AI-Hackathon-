@@ -7,6 +7,7 @@ yfinance
 websockets
 fastapi
 uvicorn[standard]
+networkx
 
 # LLM extraction stages (extract_events.py / hybrid_extract.py) — free-tier OpenRouter
 openai

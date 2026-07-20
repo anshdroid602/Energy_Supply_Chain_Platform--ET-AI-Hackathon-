@@ -9,6 +9,14 @@ fastapi
 uvicorn[standard]
 networkx
 
+# Scenario Modeller (scenario/engine.py): Monte Carlo jump-diffusion
+numpy
+scipy
+
+# Agent pipeline (agents/graph.py): linear LangGraph StateGraph over the
+# scenario + procurement logic above
+langgraph
+
 # LLM extraction stages (extract_events.py / hybrid_extract.py) — free-tier OpenRouter
 openai
 

@@ -24,9 +24,11 @@ import psycopg2
 import psycopg2.extras
 import psycopg2.pool
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from scenario import engine as scenario_engine
 
 load_dotenv()
 
@@ -672,6 +674,155 @@ def graph_alternatives(
                                 if d.get("type") == "chokepoint"},
         "options": kg.alternatives(g, refinery, max_risk),
     }
+
+
+# ============================================================================
+# Scenario Modeller: signal-triggered, mean-reverting jump-diffusion Monte
+# Carlo (scenario/engine.py). Pure computation, no DB dependency, so it's
+# independently testable and independently fast (~10k paths in a few ms).
+# ============================================================================
+
+class ScenarioRequest(BaseModel):
+    risk_score: float = Field(..., ge=0, le=1, description="Corridor risk score, e.g. from /corridors/{c}/risk-score")
+    jump_size_pct: Optional[float] = Field(None, description="Override the risk-scaled jump size directly (assumption panel knob)")
+    elasticity: float = Field(1.2, gt=0, description="Reserve-cover disruption elasticity (assumption panel knob) — simplified linear proxy, see 'caveat' in the response")
+    days_to_reroute: int = Field(21, gt=0, description="Mean-reversion half-life in days (assumption panel knob)")
+    brent_usd: float = Field(82.0, gt=0, description="Baseline Brent price before the shock")
+    baseline_reserve_days: float = Field(9.5, gt=0, description="India's strategic reserve cover before the shock (PPAC figure)")
+    daily_import_bbl: float = Field(5_000_000.0, gt=0, description="India's approximate daily crude import volume")
+    usd_inr: float = Field(83.0, gt=0)
+    n_paths: int = Field(10_000, ge=100, le=100_000)
+    horizon_days: int = Field(30, ge=1, le=365)
+    reserve_threshold_days: float = Field(7.0, gt=0, description="Reserve-cover threshold for P(cover < threshold)")
+    seed: Optional[int] = Field(None, description="Set for reproducible output (used by tests/demo replay)")
+
+
+class ScenarioAssumptionsOut(BaseModel):
+    risk_score: float
+    jump_size_pct: float
+    elasticity: float
+    days_to_reroute: int
+    horizon_days: int
+    brent_usd: float
+    baseline_reserve_days: float
+    daily_import_bbl: float
+    usd_inr: float
+    reserve_threshold_days: float
+    n_paths: int
+    seed: Optional[int]
+
+
+class ScenarioResultsOut(BaseModel):
+    median_shock_pct: float
+    var95_shock_pct: float
+    median_reserve_cover_days: float
+    var95_reserve_cover_days: float
+    prob_reserve_cover_below_threshold: float
+    median_cost_inr_cr_per_day: float
+    var95_cost_inr_cr_per_day: float
+
+
+class ScenarioDistributionOut(BaseModel):
+    shock_pct: list[float]
+    reserve_cover_days: list[float]
+
+
+class ScenarioResponse(BaseModel):
+    assumptions: ScenarioAssumptionsOut
+    results: ScenarioResultsOut
+    distribution_sample: ScenarioDistributionOut
+    caveat: str
+    elapsed_ms: float
+
+
+@app.post("/scenario/run", response_model=ScenarioResponse)
+def scenario_run(req: ScenarioRequest = Body(...)):
+    """Run the Monte Carlo scenario for a given corridor risk score. Every
+    input is an explicit, editable assumption (the frontend's 3-knob panel
+    maps to jump_size_pct / elasticity / days_to_reroute) — nothing here is
+    a hidden constant. See scenario/engine.py for the model itself."""
+    return scenario_engine.run_scenario(**req.model_dump())
+
+
+# ============================================================================
+# Pipeline: the LangGraph orchestration over everything above — signal ->
+# scenario -> procurement -> summary, one synchronous call (agents/graph.py).
+# ============================================================================
+
+from agents import graph as agent_pipeline  # noqa: E402  (import placed with its endpoint)
+
+
+class InjectedEventIn(BaseModel):
+    corridor: str = Field(..., description="Must match a corridor id, e.g. 'Strait of Hormuz'")
+    severity_score: float = Field(..., ge=0, le=10)
+    confidence: float = Field(..., ge=0, le=1)
+
+
+class ScenarioParamsIn(BaseModel):
+    jump_size_pct: Optional[float] = None
+    elasticity: float = 1.2
+    days_to_reroute: int = 21
+    brent_usd: float = 82.0
+    baseline_reserve_days: float = 9.5
+    daily_import_bbl: float = 5_000_000.0
+    usd_inr: float = 83.0
+    n_paths: int = 10_000
+    horizon_days: int = 30
+    reserve_threshold_days: float = 7.0
+    seed: Optional[int] = None
+
+
+class PipelineRequest(BaseModel):
+    corridor: str = "Strait of Hormuz"
+    refinery: str = "Jamnagar (RIL)"
+    window_days: int = 30
+    half_life_days: float = 7.0
+    max_acceptable_risk: float = Field(0.5, ge=0, le=1)
+    scenario: ScenarioParamsIn = ScenarioParamsIn()
+    injected_event: Optional[InjectedEventIn] = Field(
+        None,
+        description="Replay a cached event instead of querying live data — the 'inject signal' "
+                    "demo button, and the guaranteed fallback if the DB or live news isn't cooperating.",
+    )
+
+
+@app.post("/pipeline/run")
+def pipeline_run(req: PipelineRequest = Body(...)):
+    """Run the full signal -> scenario -> procurement -> summary pipeline in
+    one call. Returns the final state: risk score, the Monte Carlo scenario
+    (same shape as /scenario/run), ranked procurement options (same shape as
+    /graph/alternatives), the templated one-line summary, and per-step
+    wall-clock durations (`durations_ms`, `total_ms`) — this is what the
+    frontend's live latency timer reads.
+
+    No `Depends(get_db)` on the signature deliberately: when `injected_event`
+    is given, this handler never touches the database pool at all, so the
+    'inject signal' demo path is genuinely independent of the DB being
+    reachable, not just of live news existing.
+
+    Not a response_model on purpose, matching /graph/alternatives above:
+    the procurement options' shape is owned by api/graph.py, not duplicated
+    here.
+    """
+    initial_state: dict = {
+        "corridor": req.corridor,
+        "refinery": req.refinery,
+        "window_days": req.window_days,
+        "half_life_days": req.half_life_days,
+        "max_acceptable_risk": req.max_acceptable_risk,
+        "scenario_params": req.scenario.model_dump(exclude_none=True),
+    }
+
+    if req.injected_event is not None:
+        initial_state["injected_event"] = req.injected_event.model_dump()
+        return agent_pipeline.run_pipeline(initial_state)
+
+    conn = pool.getconn()
+    try:
+        initial_state["conn"] = conn
+        return agent_pipeline.run_pipeline(initial_state)
+    finally:
+        pool.putconn(conn)
 
 
 @app.get("/freshness")

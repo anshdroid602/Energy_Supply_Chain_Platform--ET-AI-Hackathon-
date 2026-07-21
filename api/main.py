@@ -130,7 +130,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["*"],  # was ["GET"]; the frontend POSTs to /pipeline/run and /scenario/run
     allow_headers=["*"],
 )
 

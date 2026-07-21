@@ -1,7 +1,7 @@
-// Shared formatting/color helpers — kept in one place so the map, gauge,
-// and chart all agree on what "Critical" vs "Low" looks like.
+// Shared formatting + the single source of truth for what "Critical" vs "Low"
+// looks like across the ring, map, board and chips. Risk thresholds mirror
+// RISK_LEVEL_THRESHOLDS in api/main.py exactly.
 
-// Mirrors RISK_LEVEL_THRESHOLDS in api/main.py exactly.
 export function riskLevel(score) {
   if (score >= 0.8) return "Critical";
   if (score >= 0.6) return "High";
@@ -9,20 +9,29 @@ export function riskLevel(score) {
   return "Low";
 }
 
+// premium risk palette (not the garish default reds/yellows)
 export function riskColor(score) {
-  if (score >= 0.8) return "#e53935"; // red
-  if (score >= 0.6) return "#fb8c00"; // orange
-  if (score >= 0.35) return "#fdd835"; // yellow
-  return "#43a047"; // green
+  if (score >= 0.8) return "#f04452";
+  if (score >= 0.6) return "#f2913d";
+  if (score >= 0.35) return "#e7b84b";
+  return "#3fb27f";
+}
+
+export function riskClass(score) {
+  if (score >= 0.8) return "crit";
+  if (score >= 0.6) return "high";
+  if (score >= 0.35) return "med";
+  return "safe";
 }
 
 export function nodeColor(type) {
   switch (type) {
-    case "supplier": return "#42a5f5";
-    case "export_port": return "#26c6da";
-    case "import_port": return "#ab47bc";
-    case "refinery": return "#66bb6a";
-    default: return "#9e9e9e";
+    case "supplier": return "#6a9bd8";
+    case "export_port": return "#45c4b0";
+    case "import_port": return "#b98bd6";
+    case "refinery": return "#3fb27f";
+    case "chokepoint": return "#f04452";
+    default: return "#5e6b78";
   }
 }
 
@@ -31,10 +40,5 @@ export function fmt(n, digits = 1) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
-export function fmtCrore(n) {
-  return `Rs.${fmt(n, 0)} cr/day`;
-}
-
-export function fmtPct(n) {
-  return `${fmt(n * 100, 1)}%`;
-}
+export function fmtInt(n) { return fmt(n, 0); }
+export function fmtPct(frac, digits = 1) { return `${fmt(frac * 100, digits)}%`; }

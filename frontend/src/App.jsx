@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import Header from "./components/Header";
-import MapView from "./components/MapView";
-import RiskPanel from "./components/RiskPanel";
-import SummaryBanner from "./components/SummaryBanner";
-import ScenarioPanel from "./components/ScenarioPanel";
-import ProcurementTable from "./components/ProcurementTable";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { AlertTriangle } from "lucide-react";
+import TopBar from "./components/TopBar";
+import OpsMap from "./components/OpsMap";
+import ThreatRing from "./components/ThreatRing";
 import AssumptionPanel from "./components/AssumptionPanel";
-import PipelineSteps from "./components/PipelineSteps";
-import ReactiveOverlay from "./components/ReactiveOverlay";
+import ChokepointBoard from "./components/ChokepointBoard";
+import PipelineRail from "./components/PipelineRail";
+import ScenarioCard from "./components/ScenarioCard";
+import ImpactCard from "./components/ImpactCard";
+import ProcurementCard from "./components/ProcurementCard";
 import { getGraph, getVessels, runPipeline } from "./api";
 import { CACHED_DEMO_EVENT } from "./demoFixtures";
-import "./App.css";
 
 const DEFAULT_ASSUMPTIONS = {
   jumpOverrideEnabled: false,
@@ -29,33 +30,27 @@ export default function App() {
   const [runId, setRunId] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [viewMode, setViewMode] = useState("anticipatory"); // "anticipatory" | "reactive" — cosmetic contrast toggle
-  const lastModeRef = useRef(null); // "injected" | "live" — which pipeline input source was last used
+  const lastModeRef = useRef(null);       // "injected" | "live"
+  const debounceRef = useRef();
 
-  // Best-effort map data — the demo's core story (pipeline result) never
-  // blocks on this, so failures here are logged, not surfaced as an error.
+  // Live map data loads immediately so the theatre is never blank.
   useEffect(() => {
     getGraph().then(setGraph).catch((e) => console.warn("graph fetch failed", e));
     getVessels().then(setVessels).catch((e) => console.warn("vessels fetch failed", e));
   }, []);
 
-  const scenarioParams = useCallback(() => ({
-    jump_size_pct: assumptions.jumpOverrideEnabled ? assumptions.jumpOverridePct : null,
-    elasticity: assumptions.elasticity,
-    days_to_reroute: assumptions.daysToReroute,
-  }), [assumptions]);
+  const buildScenario = (a) => ({
+    jump_size_pct: a.jumpOverrideEnabled ? a.jumpOverridePct : null,
+    elasticity: a.elasticity,
+    days_to_reroute: a.daysToReroute,
+  });
 
-  const runWithMode = useCallback(async (mode) => {
+  const runWithMode = useCallback(async (mode, a) => {
     setLoading(true);
     setError(null);
     try {
-      const payload = {
-        corridor,
-        refinery,
-        scenario: scenarioParams(),
-      };
-      if (mode === "injected") payload.injected_event = CACHED_DEMO_EVENT;
-
+      const payload = { corridor, refinery, scenario: buildScenario(a) };
+      if (mode === "injected") payload.injected_event = { ...CACHED_DEMO_EVENT, corridor };
       const out = await runPipeline(payload);
       setResult(out);
       setRunId((n) => n + 1);
@@ -65,56 +60,73 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [corridor, refinery, scenarioParams]);
+  }, [corridor, refinery]);
 
-  const handleInjectSignal = () => runWithMode("injected");
-  const handleRunLive = () => runWithMode("live");
+  const handleInject = () => runWithMode("injected", assumptions);
+  const handleRunLive = () => runWithMode("live", assumptions);
 
-  const handleAssumptionsChange = (next) => {
+  const handleAssumptions = (next) => {
     setAssumptions(next);
-    if (lastModeRef.current) runWithMode(lastModeRef.current);
+    if (lastModeRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => runWithMode(lastModeRef.current, next), 320);
+    }
   };
 
+  // Theatre-wide threat = worst chokepoint; the ring tracks the selected corridor.
+  const chokeNodes = useMemo(
+    () => (graph?.nodes || []).filter((n) => n.type === "chokepoint"),
+    [graph],
+  );
+  const theatreThreat = useMemo(
+    () => chokeNodes.reduce((m, n) => Math.max(m, n.risk || 0), 0),
+    [chokeNodes],
+  );
+  const liveCorridor = chokeNodes.find((n) => n.risk_corridor === corridor);
+  const ringScore = result?.risk_score ?? liveCorridor?.risk ?? 0;
+  const ringEvents = result?.risk_event_count ?? liveCorridor?.risk_events ?? null;
+  const ringActive = result != null || (liveCorridor?.risk ?? 0) > 0;
+
   return (
-    <div className="app-shell">
-      <Header
+    <div className="shell">
+      <TopBar
+        threatScore={theatreThreat}
+        corridor={corridor}
         refinery={refinery}
+        onCorridorChange={setCorridor}
         onRefineryChange={setRefinery}
-        onInjectSignal={handleInjectSignal}
+        onInject={handleInject}
         onRunLive={handleRunLive}
         loading={loading}
-        error={error}
-        mode={viewMode}
-        onModeChange={setViewMode}
       />
 
-      {viewMode === "reactive" ? (
-        <ReactiveOverlay />
-      ) : (
-        <>
-          <PipelineSteps durations={result?.durations_ms} totalMs={result?.total_ms} runId={runId} />
+      <div className="stage">
+        <div className="map-col">
+          <OpsMap graph={graph} vessels={vessels} result={result} />
+        </div>
+        <div className="rail-col">
+          <ThreatRing score={ringScore} eventCount={ringEvents} corridor={corridor} active={ringActive} />
+          <AssumptionPanel params={assumptions} onChange={handleAssumptions} disabled={loading} />
+          <ChokepointBoard graph={graph} />
+        </div>
+      </div>
 
-          <div className="main-grid">
-            <div className="map-col">
-              <MapView graph={graph} vessels={vessels} />
-            </div>
+      <PipelineRail durations={result?.durations_ms} totalMs={result?.total_ms} runId={runId} />
 
-            <div className="side-col">
-              <RiskPanel
-                corridor={corridor}
-                onCorridorChange={setCorridor}
-                riskScore={result?.risk_score}
-                eventCount={result?.risk_event_count}
-              />
-              <SummaryBanner summary={result?.summary} caveat={result?.scenario_result?.caveat} />
-              <ScenarioPanel scenario={result?.scenario_result} />
-              <AssumptionPanel params={assumptions} onChange={handleAssumptionsChange} disabled={loading} />
-            </div>
-          </div>
+      <div className="analysis">
+        <ScenarioCard scenario={result?.scenario_result} />
+        <ImpactCard scenario={result?.scenario_result} />
+        <ProcurementCard options={result?.procurement_options} refinery={refinery} />
+      </div>
 
-          <ProcurementTable options={result?.procurement_options} />
-        </>
-      )}
+      <AnimatePresence>
+        {error && (
+          <motion.div className="err-toast"
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}>
+            <AlertTriangle size={15} /> {error}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

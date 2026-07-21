@@ -9,8 +9,13 @@ fastapi
 uvicorn[standard]
 networkx
 
-# LLM extraction stages (extract_events.py / hybrid_extract.py) — free-tier OpenRouter
+# LLM extraction stages (extract_events.py / hybrid_extract.py) — free-tier OpenRouter.
+# Also the agent-layer LLM client: the openai SDK points at Cerebras (OpenAI-compatible).
 openai
+
+# Agent orchestration layer (agents/): LangGraph chain + numpy scenario model.
+langgraph
+numpy
 
 # Tests (tests/, run by .github/workflows/ci.yml)
 pytest

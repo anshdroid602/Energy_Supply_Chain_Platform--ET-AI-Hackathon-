@@ -133,6 +133,16 @@ app.add_middleware(
 )
 
 
+# Agent pipeline endpoints (the LangGraph orchestrator over this data layer).
+# Guarded so the core read API still boots if the agent deps (langgraph/openai)
+# aren't installed in a given environment.
+try:
+    from agents.api import router as pipeline_router
+    app.include_router(pipeline_router)
+except Exception as _agent_err:  # pragma: no cover
+    print(f"[api] /pipeline endpoints unavailable: {_agent_err}")
+
+
 @app.on_event("startup")
 def startup():
     global pool

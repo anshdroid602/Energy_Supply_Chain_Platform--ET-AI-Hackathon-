@@ -97,6 +97,22 @@ machine-readable schema for agents at `/openapi.json`.
 | `GET /graph/alternatives?refinery=Y&max_risk=0.5` | ranked supplier options given today's risk — the Procurement agent's input |
 | `GET /freshness` | last run per feed (with a `stale` flag) + row counts (the "data as of" panel) |
 | `GET /health` | liveness |
+| `GET /pipeline/run`, `/pipeline/stream` | the 5-agent recommendation pipeline (see `agents/`) — one-shot JSON or live SSE per agent |
+
+## Agent layer (`agents/`)
+
+The intelligence layer on top of this data platform: five agents (Risk
+Intelligence → Scenario Modeller → Procurement → Strategic Reserve → Digital
+Twin) wired into one **LangGraph** chain that fires from a detected signal to a
+costed, mapped procurement recommendation in ~6–7s. Reads Postgres in-process
+(reuses `api/graph.py`); every number is deterministic, the LLM (**Cerebras**
+by default) only narrates, so it runs end-to-end even with no key. Full details
+and run commands in `agents/README.md`.
+
+```bash
+python3 -m agents.run --corridor "Strait of Hormuz"   # console summary
+python3 -m agents.run --json                            # the frontend contract
+```
 
 ## Knowledge graph (`api/graph.py` + `api/graph_seed.json`)
 

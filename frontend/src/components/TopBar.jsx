@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Activity, Radio, Zap } from "lucide-react";
+import ModeToggle from "./ModeToggle";
 import { riskClass, riskLevel } from "../utils";
 import { CORRIDORS, REFINERIES } from "../demoFixtures";
 
@@ -30,7 +31,7 @@ function SentinelMark() {
 
 export default function TopBar({
   threatScore, corridor, refinery, onCorridorChange, onRefineryChange,
-  onInject, onRunLive, loading,
+  onInject, onRunLive, loading, mode, onModeChange,
 }) {
   const level = riskLevel(threatScore ?? 0);
   return (
@@ -50,6 +51,8 @@ export default function TopBar({
           <span className="lvl">{level}</span>
         </div>
       </div>
+
+      {mode && <ModeToggle mode={mode} onChange={onModeChange} />}
 
       <div className="topbar-spacer" />
 

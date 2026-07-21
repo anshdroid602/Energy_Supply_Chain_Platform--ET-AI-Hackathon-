@@ -12,8 +12,8 @@
 // DEMO_EVENT_START
 export const CACHED_DEMO_EVENT = {
   corridor: "Strait of Hormuz",
-  severity_score: 8.5,
-  confidence: 0.8,
+  severity_score: 9.4,
+  confidence: 0.75,
 };
 // DEMO_EVENT_END
 

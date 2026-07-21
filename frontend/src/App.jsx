@@ -10,6 +10,7 @@ import PipelineRail from "./components/PipelineRail";
 import ScenarioCard from "./components/ScenarioCard";
 import ImpactCard from "./components/ImpactCard";
 import ProcurementCard from "./components/ProcurementCard";
+import ReactiveOverlay from "./components/ReactiveOverlay";
 import { getGraph, getVessels, runPipeline } from "./api";
 import { CACHED_DEMO_EVENT } from "./demoFixtures";
 
@@ -30,6 +31,7 @@ export default function App() {
   const [runId, setRunId] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [mode, setMode] = useState("anticipatory");   // "anticipatory" | "reactive"
   const lastModeRef = useRef(null);       // "injected" | "live"
   const debounceRef = useRef();
 
@@ -98,6 +100,8 @@ export default function App() {
         onInject={handleInject}
         onRunLive={handleRunLive}
         loading={loading}
+        mode={mode}
+        onModeChange={setMode}
       />
 
       <div className="stage">
@@ -118,6 +122,12 @@ export default function App() {
         <ImpactCard scenario={result?.scenario_result} />
         <ProcurementCard options={result?.procurement_options} refinery={refinery} />
       </div>
+
+      <AnimatePresence>
+        {mode === "reactive" && (
+          <ReactiveOverlay key="reactive" onSwitch={() => setMode("anticipatory")} />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {error && (

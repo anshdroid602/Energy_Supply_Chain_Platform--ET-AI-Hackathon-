@@ -297,16 +297,6 @@ body {
   padding-left: 2px;
   color: var(--text);
 }
-.brand-name::after {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  background: var(--amber);
-  margin-left: 3px;
-  vertical-align: -2px;
-  animation: blink 1.1s step-end infinite;
-}
 .brand-sub {
   font-family: var(--font-mono);
   font-size: 9px;

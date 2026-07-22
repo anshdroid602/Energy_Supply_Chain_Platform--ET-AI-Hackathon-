@@ -1,39 +1,61 @@
-# Energy Supply Chain Platform — Data Layer
+# PRAHARI — an energy supply-chain sentinel for India's oil
 
-Everything that gets real-world data into the shared Postgres (Neon) and back
-out again: 6 feeds → loaders → one database → one read API. Agents, the
-scenario model, and the frontend all build on top of this.
+**Team f20230436 · PS 2: AI-Driven Energy Supply Chain Resilience for Import-Dependent Economies · ET AI Hackathon**
+
+PRAHARI watches the world for trouble that could choke off India's oil supply. The moment something looks dangerous near a chokepoint like the Strait of Hormuz, it works out what the trouble costs India (in rupees, and in days of reserve left) and tells the people who buy crude what to buy instead and how to ship it. "Prahari" means watchman.
+
+Our pitch in one line: **47 days versus 47 seconds.** McKinsey found an unprepared economy loses about 47 extra days recovering from an oil shock. India imports ~88% of its crude, ~40% of it through Hormuz, with only ~9.5 days of reserve cover. PRAHARI turns a detected signal into a costed, mapped recommendation in about 20 milliseconds.
+
+New here? Read **[SUBMISSION.md](SUBMISSION.md)** for the story, **[TECHNICAL_OVERVIEW.md](TECHNICAL_OVERVIEW.md)** for how it's built, and **[DEMO_GUIDE.md](DEMO_GUIDE.md)** to run it.
+
+## What it does, end to end
+
+When a threat appears, one pass through the pipeline does four things:
+
+1. **Reads the risk** — weighs recent news for a corridor by severity and recency into a single 0–1 score.
+2. **Simulates the damage** — 10,000 Monte Carlo price paths, turned into the likely and worst-case price jump, how far the reserve falls, and the cost per day.
+3. **Finds the way out** — a knowledge graph of India's real supply chain returns which suppliers can still deliver while avoiding the dangerous chokepoints, ranked by speed and safety.
+4. **Writes the answer** — one plain line a decision-maker reads in five seconds, and a reroute drawn on the map.
+
+The guiding rule: **every number is computed and can be checked; a language model is only used to read news text, never to invent a figure.**
+
+## Architecture
 
 ```
-                 ┌──────────────────────── datapipeline/ ───────────────────────┐
- EIA API ────────► eia/loader.py ──────────► prices            ┐
- yfinance ───────► market_prices/loader.py ► price_ticks       │
- OFAC SDN csv ───► ofac/loader.py ─────────► sanctions         │   shared Neon
- AISStream ws ───► ais/loader.py ──────────► vessels           ├──  Postgres
- PPAC csv ───────► ppac/loader.py ─────────► imports_india     │  (DATABASE_URL)
- GDELT dumps/BQ ─► gdelt_and_gkg/ pipeline ► structured_events ┘
-                 └──────────────▲───────────────────────────────────────────────┘
-                                │ reruns on cadence, prunes stale AIS
-                          datapipeline/controller.py       api/main.py (FastAPI)
-                    (laptop loop or GitHub Actions)         ▲ frontend + agents
+  six public feeds        loaders            shared Postgres        read API          dashboard
+  EIA  yfinance  OFAC  ─►  one script  ─►     (Neon, single    ─►   FastAPI     ─►    React +
+  AIS  PPAC  GDELT         per source         source of truth)      api/main.py       Leaflet
+                              ▲                     │
+                    controller.py                   ├─ scenario model   (scenario/engine.py, numpy Monte Carlo)
+              (cadence loop / GitHub Actions)       ├─ knowledge graph  (api/graph.py, live risk overlay)
+                                                    └─ agent pipeline   (agents/graph.py, LangGraph)
 ```
 
-## Quick start (teammates)
+Nothing talks to the outside sources except the loaders. The map, the model, and the agents all read the same database, so no two parts of the system can disagree about the data.
+
+## Quick start
 
 ```bash
-git clone <this repo> && cd <repo>
+git clone https://github.com/anshdroid602/Energy_Supply_Chain_Platform--ET-AI-Hackathon-
+cd Energy_Supply_Chain_Platform--ET-AI-Hackathon-
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # paste the team DATABASE_URL + your free keys
+cp .env.example .env          # paste the team DATABASE_URL + free API keys
 
-python3 -m datapipeline.init_db   # create all tables (idempotent)
-python3 -m datapipeline.controller --force     # load every feed right now
-uvicorn api.main:app --reload --port 8000
-open http://localhost:8000/docs
+# backend + frontend together
+./run_dev.sh
 ```
 
-If you only consume data, you don't need any API keys — just `DATABASE_URL`
-(query Postgres directly) or hit the API someone else is hosting.
+Then open http://localhost:5173 and click **Inject signal**. That button runs the whole pipeline on a cached real event with no database and no internet, so it works even if the network drops. To load fresh data first: `python3 -m datapipeline.controller --force`. Backend docs live at http://localhost:8000/docs.
+
+## The pieces
+
+- **Data layer** (`datapipeline/`) — six feeds, one small loader each, upserting into one Postgres. A controller reruns each on its natural cadence.
+- **Read API** (`api/main.py`) — one FastAPI layer over every table, plus the scenario and pipeline endpoints.
+- **Knowledge graph** (`api/graph.py`) — India's real crude supply chain with live chokepoint risk; answers "who can still reach this refinery, and how fast."
+- **Scenario model** (`scenario/engine.py`) — a mean-reverting jump-diffusion, 10,000 vectorised numpy paths in a few milliseconds.
+- **Agent pipeline** (`agents/graph.py`) — signal → scenario → procurement → summary, wired with LangGraph and timed per step.
+- **Dashboard** (`frontend/`) — a one-screen React + Leaflet console: live map, risk dial, chokepoint watch, simulation chart, cost in rupees and days, ranked suppliers, and an assumptions panel you can change on the spot.
 
 ## The feeds
 
@@ -46,112 +68,40 @@ If you only consume data, you don't need any API keys — just `DATABASE_URL`
 | PPAC India imports | `datapipeline/ppac/` | `imports_india` | none (CSV committed) | monthly |
 | GDELT news → risk signals | `datapipeline/gdelt_and_gkg/` | `structured_events` | none (public mode) | ~4 h |
 
-Every loader is idempotent (upserts) — rerunning anything is always safe.
+Every loader is idempotent (upserts), so rerunning anything is always safe.
 
-## The controller (`datapipeline/controller.py`)
-
-One entry point that runs whatever is due, based on per-feed cadences stored
-in the `ingest_runs` table (so any machine — laptop, cron, GitHub Actions —
-can pick up where the last run left off):
-
-```bash
-python3 -m datapipeline.controller                 # run whatever is due, exit
-python3 -m datapipeline.controller --force         # ignore cadences, run everything
-python3 -m datapipeline.controller --only ais      # just one feed (repeatable)
-python3 -m datapipeline.controller --loop 300      # demo-laptop mode: rerun every 5 min
-```
-
-Sliding-window policy: GDELT always fetches a rolling `GDELT_WINDOW_DAYS`
-(default 30) window ending today; AIS positions older than
-`VESSEL_RETENTION_HOURS` (default 48) are deleted. **Nothing else is ever
-deleted** — price/import/event history is what the scenario model calibrates
-on, and the risk score already down-weights old events by recency.
-
-## Auto-refresh in the cloud (GitHub Actions)
-
-`.github/workflows/refresh.yml` runs the controller every 30 minutes so Neon
-stays fresh with no laptop involved. To activate it, a repo admin adds three
-Actions secrets — `DATABASE_URL`, `EIA_API_KEY`, `AISSTREAM_API_KEY` — under
-*Settings → Secrets and variables → Actions*, and the workflow must be on the
-default branch. Trigger it manually once from the Actions tab to verify.
-
-GitHub cron is best-effort (minutes late sometimes) — good for freshness, but
-the on-stage "live" element should be `datapipeline/controller.py --loop` on the demo
-laptop.
-
-## The API (`api/main.py`)
-
-Single FastAPI read layer over all tables — interactive docs at `/docs`,
-machine-readable schema for agents at `/openapi.json`.
+## The API
 
 | Endpoint | What |
 |---|---|
-| `GET /events`, `/events/{id}`, `/meta` | filtered GDELT risk events (each with lat/lon for the map's evidence layer) |
-| `GET /corridors`, `/corridors/{c}/risk-score` | per-corridor stats + 0–1 recency/confidence-weighted risk score; `low_evidence` flags scores backed by fewer than `min_events` events |
+| `GET /events`, `/events/{id}`, `/meta` | filtered GDELT risk events, each with lat/lon for the map |
+| `GET /corridors`, `/corridors/{c}/risk-score` | per-corridor stats + a 0–1 recency/confidence-weighted risk score |
 | `GET /prices/daily`, `/prices/ticks`, `/prices/latest` | EIA daily + yfinance intraday |
-| `GET /vessels/latest`, `/vessels/sanctioned` | latest AIS position per ship, flagged against OFAC vessel names |
+| `GET /vessels/latest`, `/vessels/sanctioned` | latest AIS position per ship, flagged against OFAC vessels |
 | `GET /imports/india` | PPAC monthly quantity/value series |
-| `GET /sanctions/vessels` | the OFAC vessel registry |
-| `GET /graph` | the full supply-chain knowledge graph (nodes carry lat/lon for the map) with live chokepoint risk |
-| `GET /graph/routes?supplier=X&refinery=Y` | every route between a supplier and a refinery, with ETA + per-chokepoint risk |
-| `GET /graph/alternatives?refinery=Y&max_risk=0.5` | ranked supplier options given today's risk — the Procurement agent's input |
-| `GET /freshness` | last run per feed (with a `stale` flag) + row counts (the "data as of" panel) |
-| `GET /health` | liveness |
+| `GET /graph`, `/graph/routes`, `/graph/alternatives` | the supply-chain graph with live risk; ranked supplier options |
+| `POST /scenario/run` | the Monte Carlo scenario for a given risk score |
+| `POST /pipeline/run` | the full signal → scenario → procurement → summary pipeline in one call |
+| `GET /freshness`, `/health` | per-feed staleness and liveness |
 
-## Knowledge graph (`api/graph.py` + `api/graph_seed.json`)
-
-A small directed graph of India's real crude supply chain:
-`supplier → export port → chokepoint(s) → Indian port → refinery`
-(~32 nodes, ~48 edges — 7 suppliers, 5 chokepoints, 5 refineries, all real
-infrastructure including the Hormuz bypasses: Saudi's East-West pipeline to
-Yanbu, UAE's ADCOP pipeline to Fujairah, Russia's ESPO to Kozmino).
-
-The skeleton is static (curated seed file, approximate voyage days and FY25
-import shares). The **risk is live**: each chokepoint pulls the same
-recency/confidence-weighted risk score as `/corridors/{c}/risk-score` from
-`structured_events` at query time. So when GDELT news turns Hormuz critical,
-`/graph/alternatives` automatically stops routing through it and returns the
-ranked fallback suppliers with ETAs — which is exactly what the Procurement
-agent recommends and what the reroute map draws. Read-only and derived;
-never written to, never synced.
-
-## GDELT pipeline specifics
-
-See `datapipeline/gdelt_and_gkg/README.md`. Short version: the pipeline is
-`fetch → merge → extract → load`, with two interchangeable fetch sources —
-`--source public` (default; free GDELT daily dumps, no account, events only)
-and `--source bigquery` (needs GCP credentials; adds the mentions join + GKG
-theme context, now on partitioned tables with a rolling date window). The
-extract stage is deterministic by default, with optional LLM review
-(`--extractor hybrid`).
-
-Corridor assignment is **geofenced**: every event carries GDELT's lat/lon,
-and coordinates inside a corridor's bounding box win over the country-code
-fallback — so a strike *at* Hormuz and a protest in inland Iran are no
-longer the same thing. The coordinates are stored (`structured_events.lat/lon`)
-so the frontend can plot the actual evidence on the map.
-
-## Tests & CI
+## Tests and CI
 
 ```bash
 pytest tests/ -q
 ```
 
-Unit tests cover the extraction rules (geofencing, CAMEO fallbacks, score
-bounds), the knowledge graph (crisis routing, path-risk math), and the GDELT
-dump parser (synthetic 58-column file — catches silent column shifts).
-`.github/workflows/ci.yml` runs them on every push/PR. Loaders also validate
-inputs at runtime: crude prices outside $1–500/bbl are rejected, and a
-truncated OFAC download fails loudly instead of loading a partial list.
+36 tests pass plus a gated DB-integration suite, run on every push through GitHub Actions. Loaders also validate at runtime: crude prices outside $1–500/bbl are rejected, and a truncated OFAC download fails loudly instead of loading a partial list.
 
-## Known data caveats (read before demoing)
+## Honest data caveats (read before demoing)
 
-- **AISStream free tier has ~zero coverage over the Persian Gulf / Indian
-  Ocean.** The default box is the English Channel (dense coverage) to prove
-  the pipeline is live with real ships. The Hormuz map layer is built from
-  choke-point geography + OFAC vessels + GDELT signal — real data we do have.
-- **GDELT public mode has no GKG themes**, so event categorisation falls back
-  to CAMEO event codes and confidences run lower. BigQuery mode enriches it.
-- **PPAC is a committed CSV** (data.gov.in blocks scraping); refresh it by
-  downloading the new monthly sheet to `datapipeline/ppac/data/ppac.csv`.
-- Rule from the plan: real-but-cached beats fabricated. Never invent numbers.
+- **The data is real but not a live stream.** Each feed refreshes on its own schedule; for a demo, run the controller first so the numbers are current.
+- **AISStream free tier barely covers the Persian Gulf.** The live ship dots sit on well-covered lanes to prove the pipeline is real; the Hormuz story is told with geography, sanctioned tankers, and the news signal, which are all real data we do have.
+- **Rule of the project: real-but-cached beats fabricated. We never invent a number.**
+
+## Tech stack
+
+Python + FastAPI, Postgres on Neon, numpy (Monte Carlo), networkx (knowledge graph), LangGraph (agent chain), React + Vite + Leaflet (dashboard), GitHub Actions (CI + scheduled refresh). A language model reads the news; nothing else depends on it. Everything runs on free tiers.
+
+## Team
+
+Team **f20230436** — Ansh Sharma (lead), Harsh Vardhan, Aditya Nitin Jagtap, Abhijay Pansari.

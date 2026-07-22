@@ -2,7 +2,7 @@
 
 PRAHARI watches the world for trouble that could choke off India's oil supply. The moment something looks dangerous, it does the work a room full of analysts would normally take weeks to do: it figures out how much the trouble costs India (in rupees, and in days of supply left), and it tells the people who buy crude what to buy instead and how to ship it. "Prahari" means watchman.
 
-Built for Challenge 2 (supply-chain intelligence and energy security).
+Team f20230436. Problem statement **PS 2: AI-Driven Energy Supply Chain Resilience for Import-Dependent Economies**.
 
 Our one-line pitch: **47 days versus 47 seconds.**
 
@@ -73,8 +73,13 @@ See `DEMO_GUIDE.md` for the step-by-step. The very short version:
 
 then open http://localhost:5173 and click **Inject signal**. That button runs the whole pipeline on a cached real event with no database and no internet, so it works even if the wifi dies.
 
-## Who built it
+## The team
 
-Four of us split the work. One person built the data feeds and the shared database. One built the news pipeline that turns raw world events into scored risk signals. One built the agents and the knowledge graph. One built the backend API and the dashboard.
+Team **f20230436**
 
-_(Team members: add your names here.)_
+- Ansh Sharma (team lead)
+- Harsh Vardhan
+- Aditya Nitin Jagtap
+- Abhijay Pansari
+
+The four of us split the build across four areas: the data layer (six live feeds into one shared database), the news pipeline that turns raw world events into scored risk signals, the agents and the knowledge graph, and the backend API and the dashboard.
